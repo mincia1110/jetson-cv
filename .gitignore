@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+artifacts/
+*.onnx
+*.engine
+*.npz
+*.whl
+.DS_Store
+.env
+.env.*
+*.plan
+local/
