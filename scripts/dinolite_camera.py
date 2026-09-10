@@ -7,10 +7,12 @@ import threading
 import cv2
 import numpy as np
 
+from camera_conditions import EXPOSURE_COMMANDS, assess_frame, validate_conditions
+
 
 class DinoLiteCamera:
     def __init__(self, device='/dev/video0', width=2592, height=1944, fps=10,
-                 controls=None, warmup_frames=5):
+                 controls=None, warmup_frames=5, initial_config=None):
         self.device = device
         self.width, self.height, self.fps = width, height, fps
         self.controls = dict(controls or {})
@@ -23,6 +25,7 @@ class DinoLiteCamera:
         self._cap = None
         self._closed = False
         self._auto_exposure = None  # Preserve startup state until explicitly selected.
+        self._fixed_config = validate_conditions(initial_config) if initial_config is not None else None
         self.ready = Future()
         self._thread = threading.Thread(target=self._run, daemon=True, name='dinolite')
         self._thread.start()
@@ -40,6 +43,7 @@ class DinoLiteCamera:
         result = subprocess.run(args, capture_output=True, text=True, timeout=5)
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or str(args))
+        return result.stdout.strip()
 
     def _led(self, enabled):
         # AM7115MZT a168:0960: user verified these two payloads on hardware.
@@ -83,12 +87,14 @@ class DinoLiteCamera:
             self._cap.set(prop, value)
         self._read()  # Start streaming before the vendor command.
         self._led(False)
-        if self._auto_exposure is not None:
+        if self._auto_exposure is not None and self._fixed_config is None:
             self._ae(self._auto_exposure)
         if self.controls:
             # Use Linux control names and validated Linux values, never DLL enum IDs.
             self._command(['v4l2-ctl', '-d', self.device, '--set-ctrl',
                            ','.join(f'{key}={int(value)}' for key, value in self.controls.items())])
+        if self._fixed_config is not None:
+            self._apply_fixed(self._fixed_config)
         frame = None
         for _ in range(max(1, self.warmup_frames)):
             frame = self._read()
@@ -138,6 +144,75 @@ class DinoLiteCamera:
     def set_auto_exposure(self, enabled):
         return self._submit('ae', bool(enabled))
 
+    def check_conditions(self, config):
+        # Validate before queuing: invalid settings must not disrupt streaming.
+        return self._submit('check', validate_conditions(config))
+
+    def apply_initial(self, config):
+        return self._submit('initial', validate_conditions(config))
+
+    def prepare_inference(self, config):
+        """Future -> {frame, report}. frame is None on failed image checks."""
+        return self._submit('prepare', validate_conditions(config))
+
+    def _apply_fixed(self, config):
+        if self._cap is None:
+            raise RuntimeError('Camera unavailable; reconnect first')
+        self._led(False)
+        self._ae(False)
+        self._command(['uvcdynctrl', '-d', self.device, '-S', '4:2',
+                       EXPOSURE_COMMANDS[config['ExposureTime']]])
+        self._command(['v4l2-ctl', '-d', self.device,
+                       f"--set-ctrl=brightness={config['Brightness']}"])
+        actual = self._brightness()
+        if actual != config['Brightness']:
+            raise RuntimeError(f"Brightness 적용 실패: target={config['Brightness']}, actual={actual}")
+        self._fixed_config = dict(config)
+        self.controls['brightness'] = config['Brightness']
+        for _ in range(config['settle_frames']):
+            self._publish(self._read())
+        return {'Brightness': actual, 'ExposureTime_requested': config['ExposureTime'],
+                'exposure_readback': 'unavailable', 'mode': 'fixed'}
+
+    def _brightness(self):
+        output = self._command(['v4l2-ctl', '-d', self.device, '--get-ctrl=brightness'])
+        return int(output.rsplit(':', 1)[1].strip())
+
+    def _assess(self, config, frame):
+        report = assess_frame(frame, config)
+        report['brightness_control'] = self._brightness()
+        if config.get('Brightness') is not None and report['brightness_control'] != config['Brightness']:
+            report['reasons'].append('Brightness setting mismatch')
+        report['ae_last_command'] = self._auto_exposure
+        report['exposure_readback'] = 'unavailable: AE command state is not shutter readback'
+        if self._auto_exposure is True:
+            report['reasons'].append('AE ON: exposure is not frozen')
+        return report
+
+    def _check_conditions(self, config, include_frame=False):
+        brightness_before = self._brightness()
+        # There is no proven exposure GET protocol. Re-send the fixed value on
+        # EVERY measurement instead of pretending cached AE state is readback.
+        self._apply_fixed(config)
+        frame = self._capture(config['capture_no'], (900, 1100, 0, 2590))
+        before = self._assess(config, frame)
+        report = {'before': before, 'reset_performed': False, 'after': None,
+                  'brightness_before_apply': brightness_before,
+                  'fixed_settings_applied': True, 'ExposureTime_requested': config['ExposureTime'],
+                  'exposure_mode': 'fixed', 'exposure_verified': False}
+        if before['reasons'] and config['reset_flag_en']:
+            self._open()
+            # _open reapplies the fixed config; never switch AE on to adapt.
+            report['reset_performed'] = True
+            frame = self._capture(config['capture_no'], (900, 1100, 0, 2590))
+            report['after'] = self._assess(config, frame)
+        final = report['after'] or before
+        report['status'] = 'FAIL' if final['reasons'] else 'IMAGE_AND_BRIGHTNESS_OK'
+        report['allow_inference'] = not final['reasons']
+        if include_frame:
+            return {'frame': frame if report['allow_inference'] else None, 'report': report}
+        return report
+
     def close(self):
         """Request shutdown without blocking the GUI; worker releases the device."""
         with self._lock:
@@ -173,6 +248,12 @@ class DinoLiteCamera:
                         result = self._open()
                     elif action == 'capture':
                         result = self._capture(*args)
+                    elif action == 'check':
+                        result = self._check_conditions(*args)
+                    elif action == 'prepare':
+                        result = self._check_conditions(*args, include_frame=True)
+                    elif action == 'initial':
+                        result = self._apply_fixed(*args)
                     else:
                         if self._cap is None:
                             raise RuntimeError('Camera unavailable; reconnect first')

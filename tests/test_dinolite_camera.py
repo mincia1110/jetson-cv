@@ -1,11 +1,14 @@
 import importlib.util
 from pathlib import Path
 import threading
+import sys
 import types
 import unittest
 from unittest.mock import patch
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 
 
 # Hardware-free import: tests exercise ownership and failures, not OpenCV itself.
@@ -21,6 +24,7 @@ class FakeCamera(module.DinoLiteCamera):
         self.calls = []
         self.sequence = 0
         self.fail = False
+        self.brightness = 0
         super().__init__(width=4, height=3)
 
     def record(self, kind):
@@ -30,6 +34,8 @@ class FakeCamera(module.DinoLiteCamera):
         self.record('open')
         self._cap = object()
         self._publish(np.zeros((3, 4, 3), dtype=np.uint8))
+        if self._fixed_config is not None:
+            self._apply_fixed(self._fixed_config)
         return {'width': 4, 'height': 3}
 
     def _read(self):
@@ -45,6 +51,15 @@ class FakeCamera(module.DinoLiteCamera):
 
     def _command(self, args):
         self.record(tuple(args))
+        if args[-1].startswith('--set-ctrl=brightness='):
+            self.brightness = int(args[-1].split('=')[-1])
+        if args[-1] == '--get-ctrl=brightness':
+            return f'brightness: {self.brightness}'
+
+    def _capture(self, count, roi):
+        if roi == (900, 1100, 0, 2590):
+            return self._read()
+        return super()._capture(count, roi)
 
 
 class CameraTests(unittest.TestCase):
@@ -87,6 +102,75 @@ class CameraTests(unittest.TestCase):
         self.camera.close()
         with self.assertRaisesRegex(RuntimeError, 'closed'):
             self.camera.capture().result(timeout=2)
+
+    def test_condition_reset_once_and_recheck_failure(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'reset_flag_en': True, 'settle_frames': 2, 'capture_no': 1,
+                  'Brightness': 16, 'ExposureTime': '1/60s'}
+        bad = {'reasons': ['BRIGHT error']}
+        with patch.object(self.camera, '_assess', side_effect=[bad, bad]) as assess:
+            result = self.camera.check_conditions(config).result(timeout=2)
+        self.assertEqual(assess.call_count, 2)
+        self.assertTrue(result['reset_performed'])
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertFalse(result['exposure_verified'])
+        self.assertEqual(self.camera.controls['brightness'], 16)
+        commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+        self.assertNotIn('05000003357810', commands)
+        self.assertEqual(commands.count('05080001357810'), 2)
+        self.assertFalse(result['allow_inference'])
+
+    def test_reset_disabled_and_good_result_do_not_reset(self):
+        for reasons, enabled in [(['BRIGHT error'], False), ([], True)]:
+            config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                      'reset_flag_en': enabled, 'Brightness': 16, 'ExposureTime': '1/60s'}
+            with patch.object(self.camera, '_assess', return_value={'reasons': reasons}) as assess:
+                result = self.camera.check_conditions(config).result(timeout=2)
+            self.assertEqual(assess.call_count, 1)
+            self.assertFalse(result['reset_performed'])
+
+    def test_dll_exposure_rejected_without_disrupting_stream(self):
+        with self.assertRaisesRegex(ValueError, 'DLL'):
+            self.camera.check_conditions({'BRIGHT_min': 0, 'BRIGHT_max': 255,
+                                          'RG_gab': 255, 'Brightness': 16, 'ExposureValue': 10})
+        self.assertIsNotNone(self.camera.latest()[0])
+
+    def test_recovered_image_does_not_claim_absolute_exposure_verified(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'reset_flag_en': True, 'settle_frames': 1,
+                  'Brightness': 16, 'ExposureTime': '1/60s'}
+        with patch.object(self.camera, '_assess', side_effect=[
+                {'reasons': ['Brightness setting mismatch']}, {'reasons': []}]):
+            result = self.camera.check_conditions(config).result(timeout=2)
+        self.assertEqual(result['status'], 'IMAGE_AND_BRIGHTNESS_OK')
+        self.assertFalse(result['exposure_verified'])
+
+    def test_prepare_returns_only_the_assessed_frame_and_reapplies_each_time(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'Brightness': 16, 'ExposureTime': '1/125s'}
+        with patch.object(self.camera, '_assess', return_value={'reasons': []}) as assess:
+            first = self.camera.prepare_inference(config).result(timeout=2)
+            self.assertIs(first['frame'], assess.call_args.args[1])
+            self.camera.brightness = 99
+            second = self.camera.prepare_inference(config).result(timeout=2)
+        self.assertEqual(second['report']['brightness_before_apply'], 99)
+        self.assertEqual(self.camera.brightness, 16)
+        commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+        self.assertEqual(commands.count('05040001357810'), 2)
+
+    def test_failed_conditions_never_provide_inference_frame(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'Brightness': 16, 'ExposureTime': '1/60s'}
+        with patch.object(self.camera, '_assess', return_value={'reasons': ['BRIGHT error']}):
+            result = self.camera.prepare_inference(config).result(timeout=2)
+        self.assertIsNone(result['frame'])
+
+    def test_brightness_write_failure_blocks_measurement(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'Brightness': 16, 'ExposureTime': '1/60s'}
+        with patch.object(self.camera, '_brightness', return_value=99):
+            with self.assertRaisesRegex(RuntimeError, 'Brightness 적용 실패'):
+                self.camera.prepare_inference(config).result(timeout=2)
 
 
 if __name__ == '__main__':

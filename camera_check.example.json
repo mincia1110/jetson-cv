@@ -1,0 +1,11 @@
+{
+  "BRIGHT_min": 0,
+  "BRIGHT_max": 255,
+  "RG_gab": 255,
+  "Brightness": null,
+  "ExposureTime": null,
+  "capture_no": 5,
+  "reset_flag_en": true,
+  "exposure_reset_mode": "fixed",
+  "settle_frames": 5
+}
