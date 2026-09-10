@@ -1,0 +1,9 @@
+# Camera-only GUI: scripts/camera_control_gui.py (JetPack 6.x / system Python).
+# Install system dependencies first:
+# sudo apt install python3-venv python3-pip python3-tk python3-pil.imagetk python3-opencv python3-numpy uvcdynctrl v4l-utils
+# Use a venv created with --system-site-packages to reuse these packages.
+# cv2 comes from python3-opencv; do not install an additional opencv-python wheel.
+# tkinter, uvcdynctrl and v4l2-ctl are system dependencies, not pip packages.
+# Keep NumPy below 2 for the system OpenCV's NumPy 1.x ABI.
+numpy>=1.21,<2
+Pillow>=9
