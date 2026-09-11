@@ -1,3 +1,36 @@
+# 2026-09-11: VisualAD 후처리 연결 완료
+
+사용자가 제공한 VisualADInferencer와 공식 저장소의 scoring/get_transform 정의를 바탕으로 `scripts/visualad_adapter.py`를 추가했다. 기존 템플릿의 전후처리 미구현 안내는 다른 모델용이며, 이번 7-output VisualAD 모델에는 이 어댑터를 사용한다. 사내 get_transform이 현재 공개 버전과 동일한지는 실제 입력 텐서로 최종 비교한다.
+
+기존 local/measurement.json의 adapter를 `scripts/visualad_adapter.py`로 변경한다. 예제 설정도 이 경로로 갱신했다. 입력은 float32 [1,3,336,336], input 이름이다. class_features는 원본 wrapper처럼 사용하지 않는다. 4개 레이어 모두 존재해야 한다.
+
+의존성은 torch와 scipy다. 모델 실행은 ONNX CUDA 또는 TensorRT GPU이고, 제공된 wrapper와 동일하게 후처리는 CPU torch/scipy에서 실행한다. 사용 중인 Jetson용 torch를 유지한다.
+
+```bash
+python -c "import torch, scipy; print(torch.__version__, scipy.__version__)"
+python -m pip install -r requirements-inference.txt
+```
+
+Torch가 없으면 해당 환경용 wheel 설치가 별도로 필요하다. NumPy/OpenCV 버전이나 NVIDIA torch를 무조건 업그레이드하지 않는다.
+
+## 이미 저장한 출력 비교 (이미지 없이 가능)
+
+아래 threshold 0은 실행 예시다. 실제 GUI threshold를 10으로 나눈 내부값으로 바꾼다.
+
+```bash
+python scripts/compare_visualad.py \
+  --reference artifacts/backend-comparison-01/onnx_outputs.npz \
+  --actual artifacts/backend-comparison-01/trt_outputs.npz \
+  --threshold 0 \
+  --output artifacts/visualad-postprocess-01
+```
+
+합산 raw map의 상위 1%(ceil, 1129개) 평균이 score다. sigma=4 Gaussian은 그 이후 맵·마스크에만 적용한다. wrapper label/mask는 strict >, GUI의 NG는 >=를 유지한다. 출력은 맵·점수 오차, 양쪽 판정, 마스크 불일치 픽셀 수다. 0 입력 결과는 실행·수치 비교용이며 업무 판정 검증은 사내 실제 영상으로 한다.
+
+출처: [공식 scoring](https://github.com/7HHHHH/VisualAD/blob/main/utils/scoring.py), [공식 transforms](https://github.com/7HHHHH/VisualAD/blob/main/utils/transforms.py). 사용자 제공 wrapper의 계산 순서를 기준으로 구현했으며 아래의 과거 템플릿 연결 설명보다 이 절차를 우선한다.
+
+---
+
 # test.py → ONNX Runtime → TensorRT
 
 `python scripts/test_jetson.py --config local/measurement.json`이 측정 GUI 진입점이다. 제공받은 test.py의 Tkinter 배치(미리보기, 전처리/NG/히트맵, 이름·폴더·threshold·측정·OK/NG)를 기준으로 카메라와 추론 호출을 분리했다. 원본 파일 자체는 저장소에 없으므로 원본 전체에 대한 패치가 아니라 제공된 코드에서 측정 경로를 옮긴 버전이다.

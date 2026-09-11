@@ -4,7 +4,7 @@
   "provider": "CUDAExecutionProvider",
   "onnx": "local/model.onnx",
   "engine": "artifacts/visualad-fp32/model.engine",
-  "adapter": "local/model_adapter.py",
+  "adapter": "scripts/visualad_adapter.py",
   "camera_config": "local/camera_check.json",
   "device": "/dev/video0",
   "threshold": 0,

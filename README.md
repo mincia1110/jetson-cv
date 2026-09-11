@@ -185,3 +185,5 @@ python -m pip check
 ## 기존 test.py의 ONNX/TensorRT 연결
 
 측정 GUI 진입점은 `scripts/test_jetson.py`다. 카메라 교체, ONNX Runtime 실행, TensorRT 변환·비교·GUI 전환 절차는 [INFERENCE_PORT.md](INFERENCE_PORT.md)를 따른다. 실제 모델의 get_transform/user_th_inference 연결과 Jetson GPU 검증은 아직 필요하다.
+
+첨부 MOSA 메인 기반 최소 변경판은 `MOSA_visualAD_comb_jetson.py`이며, 실행 절차는 [MOSA_JETSON_PORT.md](MOSA_JETSON_PORT.md)를 따른다.

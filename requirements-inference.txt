@@ -4,3 +4,7 @@ polygraphy==0.49.9
 # TensorRT: supplied by JetPack apt packages, visible via --system-site-packages.
 # ONNX Runtime CUDA: install a separately validated Jetson/aarch64 wheel matching
 # Python, CUDA and cuDNN. Do not blindly install the latest onnxruntime-gpu.
+# VisualAD reference postprocessing uses CPU torch + scipy (inference remains GPU).
+# Install a platform-compatible torch build separately; avoid replacing Jetson's
+# existing NVIDIA build through an unpinned pip upgrade.
+scipy>=1.10,<1.14
