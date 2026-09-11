@@ -21,15 +21,27 @@ def main():
     parser.add_argument('--config', type=Path, default=Path('camera_check.example.json'),
                         help='Camera condition JSON; reloaded on each check')
     args = parser.parse_args()
+    args.config = args.config.resolve()
+    print(f'Camera config: {args.config}', flush=True)
     initial_config = json.loads(args.config.read_text(encoding='utf-8'))
+    print(f"ExposureTime: {initial_config.get('ExposureTime')!r}", flush=True)
     if args.brightness is not None:
         initial_config['Brightness'] = args.brightness
     configured = (initial_config.get('Brightness') is not None and
                   initial_config.get('ExposureTime') is not None)
+    config_error = None
     if configured:
-        validate_conditions(initial_config)
+        try:
+            initial_config = validate_conditions(initial_config)
+        except (ValueError, KeyError, TypeError) as exc:
+            configured = False
+            config_error = str(exc)
     root = tk.Tk()
     root.title('Dino-Lite — Jetson camera check')
+    ttk.Label(root, text=f'설정 파일: {args.config}', wraplength=900).pack()
+    if config_error:
+        ttk.Label(root, text=f'초기값 미적용: {config_error}', wraplength=900,
+                  foreground='red').pack()
     controls = {} if args.brightness is None else {'brightness': args.brightness}
     camera = DinoLiteCamera(device=args.device, fps=args.fps, controls=controls,
                             initial_config=initial_config if configured else None)

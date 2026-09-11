@@ -34,7 +34,8 @@ def validate_conditions(config):
     if type(result.get('Brightness')) is not int:
         raise ValueError('초기 Brightness를 Linux V4L2 정수로 입력하세요.')
     if result.get('ExposureTime') not in EXPOSURE_COMMANDS:
-        raise ValueError('고정 ExposureTime을 선택하세요. DLL ExposureValue의 숫자는 자동 변환하지 않습니다.')
+        raise ValueError(f"고정 ExposureTime을 선택하세요. 읽은 값={result.get('ExposureTime')!r}. "
+                         '예: "ExposureTime": "1/60s". DLL ExposureValue의 숫자는 자동 변환하지 않습니다.')
     if result.get('exposure_reset_mode', 'fixed') != 'fixed':
         raise ValueError('AE 재적응 설정을 제거하세요. 현재 모드는 fixed입니다.')
     return result
