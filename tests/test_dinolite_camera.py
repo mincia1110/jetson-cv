@@ -120,6 +120,34 @@ class CameraTests(unittest.TestCase):
         self.assertEqual(commands.count('05080001357810'), 2)
         self.assertFalse(result['allow_inference'])
 
+    def test_apply_exception_recovers_and_returns_fresh_frame(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'reset_flag_en': True, 'Brightness': 16, 'ExposureTime': '1/60s'}
+        original = self.camera._apply_fixed
+        attempts = []
+        def apply(values):
+            attempts.append(values)
+            if len(attempts) == 1:
+                raise RuntimeError('command failed')
+            return original(values)
+        with patch.object(self.camera, '_apply_fixed', side_effect=apply), patch.object(
+                self.camera, '_assess', return_value={'reasons': []}):
+            result = self.camera.prepare_inference(config).result(timeout=2)
+        self.assertEqual(len(attempts), 2)
+        self.assertTrue(result['report']['reset_performed'])
+        self.assertTrue(result['report']['allow_inference'])
+        self.assertIsNotNone(result['frame'])
+
+    def test_recovery_exception_blocks_inference_without_raising(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'reset_flag_en': True, 'Brightness': 16, 'ExposureTime': '1/60s'}
+        with patch.object(self.camera, '_apply_fixed', side_effect=RuntimeError('USB error')):
+            result = self.camera.prepare_inference(config).result(timeout=2)
+        self.assertTrue(result['report']['reset_performed'])
+        self.assertFalse(result['report']['allow_inference'])
+        self.assertIsNone(result['frame'])
+        self.assertIn('USB error', result['report']['after']['reasons'][0])
+
     def test_reset_disabled_and_good_result_do_not_reset(self):
         for reasons, enabled in [(['BRIGHT error'], False), ([], True)]:
             config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
@@ -169,8 +197,11 @@ class CameraTests(unittest.TestCase):
         config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
                   'Brightness': 16, 'ExposureTime': '1/60s'}
         with patch.object(self.camera, '_brightness', return_value=99):
-            with self.assertRaisesRegex(RuntimeError, 'Brightness 적용 실패'):
-                self.camera.prepare_inference(config).result(timeout=2)
+            result = self.camera.prepare_inference(config).result(timeout=2)
+        self.assertIsNone(result['frame'])
+        self.assertFalse(result['report']['allow_inference'])
+        self.assertFalse(result['report']['reset_performed'])
+        self.assertIn('Brightness 적용 실패', result['report']['before']['reasons'][0])
 
 
 if __name__ == '__main__':

@@ -1,4 +1,7 @@
 """Narrow compatibility bridge for the supplied MOSA main (no GUI redesign)."""
+import csv
+import os
+import tempfile
 import json
 import re
 from pathlib import Path
@@ -21,7 +24,10 @@ def read_mosa_data(path='data.json'):
     text = Path(path).read_text(encoding='utf-8-sig')
     text = re.sub(r'"(?:\\.|[^"\\])*"|//[^\r\n]*',
                   lambda match: '' if match.group().startswith('//') else match.group(), text)
-    return json.loads(text)
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("data.json 최상위는 JSON 객체 { ... }여야 합니다.")
+    return data
 
 
 def camera_config(data):
@@ -46,6 +52,39 @@ def model_runtime(data, slot):
     return config
 
 
+def append_measurement_log(path, header, row, backend):
+    """Add backend column; preserve legacy rows with unknown historical backend."""
+    path = Path(path)
+    expected = list(header) + ['backend']
+    if path.exists() and path.stat().st_size:
+        with path.open(newline='', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            old_header = next(reader)
+            if old_header == list(header):
+                # Atomic replacement avoids leaving a partially migrated log.
+                temporary = None
+                try:
+                    with tempfile.NamedTemporaryFile(mode='w', newline='', encoding='utf-8',
+                                                     dir=path.parent, delete=False) as out:
+                        temporary = out.name
+                        writer = csv.writer(out)
+                        writer.writerow(expected)
+                        for old_row in reader:
+                            writer.writerow(old_row + ['unknown'])
+                    os.replace(temporary, path)
+                finally:
+                    if temporary and os.path.exists(temporary):
+                        os.unlink(temporary)
+            elif old_header != expected:
+                raise ValueError(f'Unexpected measurement CSV header: {path}')
+    needs_header = not path.exists() or path.stat().st_size == 0
+    with path.open('a', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        if needs_header:
+            writer.writerow(expected)
+        writer.writerow(list(row) + [backend])
+
+
 class MOSAInferencer:
     """Called and closed on the original GUI thread, keeping TRT thread ownership."""
     def __init__(self, onnx_path, runtime):
@@ -55,6 +94,7 @@ class MOSAInferencer:
             if not config.get('engine'):
                 raise ValueError('Selected model has no TensorRT engine path')
         config.setdefault('backend', 'onnx')
+        self.backend_name = config['backend']
         self.backend = open_backend(config)
         self.backend.__enter__()
         self.input_name = config.get('input_name', 'input')

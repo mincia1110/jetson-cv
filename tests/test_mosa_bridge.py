@@ -1,3 +1,4 @@
+import csv
 import sys
 from pathlib import Path
 import tempfile
@@ -56,6 +57,21 @@ class BridgeTests(unittest.TestCase):
             bridge.model_runtime(data, 'C')
         data['backend'] = 'onnx'
         self.assertNotIn('engine', bridge.model_runtime(data, 'C'))
+
+    def test_log_backend_and_legacy_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'log.csv'
+            path.write_text('Model,score\nA,0.1\n', encoding='utf-8')
+            bridge.append_measurement_log(path, ['Model', 'score'], ['B', '0.2'], 'tensorrt')
+            bridge.append_measurement_log(path, ['Model', 'score'], ['A', '0.3'], 'onnx')
+            with path.open(newline='', encoding='utf-8') as file:
+                rows = list(csv.reader(file))
+            self.assertEqual(rows, [['Model', 'score', 'backend'], ['A', '0.1', 'unknown'],
+                                    ['B', '0.2', 'tensorrt'], ['A', '0.3', 'onnx']])
+            new = Path(directory) / 'new.csv'
+            bridge.append_measurement_log(new, ['Model'], ['C'], 'onnx')
+            with new.open(newline='', encoding='utf-8') as file:
+                self.assertEqual(list(csv.reader(file)), [['Model', 'backend'], ['C', 'onnx']])
 
     def test_mosa_averages_full_frame(self):
         camera=object.__new__(bridge.MOSACamera)

@@ -190,22 +190,36 @@ class DinoLiteCamera:
         return report
 
     def _check_conditions(self, config, include_frame=False):
-        brightness_before = self._brightness()
-        # There is no proven exposure GET protocol. Re-send the fixed value on
-        # EVERY measurement instead of pretending cached AE state is readback.
-        self._apply_fixed(config)
-        frame = self._capture(config['capture_no'], (900, 1100, 0, 2590))
-        before = self._assess(config, frame)
-        report = {'before': before, 'reset_performed': False, 'after': None,
-                  'brightness_before_apply': brightness_before,
-                  'fixed_settings_applied': True, 'ExposureTime_requested': config['ExposureTime'],
-                  'exposure_mode': 'fixed', 'exposure_verified': False}
-        if before['reasons'] and config['reset_flag_en']:
-            self._open()
-            # _open reapplies the fixed config; never switch AE on to adapt.
-            report['reset_performed'] = True
+        report = {'before': None, 'reset_performed': False, 'after': None,
+                  'brightness_before_apply': None, 'fixed_settings_applied': False,
+                  'ExposureTime_requested': config['ExposureTime'],
+                  'exposure_mode': 'fixed', 'exposure_verified': False,
+                  'recovery_enabled': config['reset_flag_en']}
+        frame = None
+        try:
+            report['brightness_before_apply'] = self._brightness()
+            # Exposure cannot be read back: apply fixed settings every measurement.
+            self._apply_fixed(config)
+            report['fixed_settings_applied'] = True
             frame = self._capture(config['capture_no'], (900, 1100, 0, 2590))
-            report['after'] = self._assess(config, frame)
+            before = self._assess(config, frame)
+        except Exception as exc:
+            before = {'reasons': [f'{type(exc).__name__}: {exc}']}
+        report['before'] = before
+        if before['reasons'] and config['reset_flag_en']:
+            report['reset_performed'] = True
+            try:
+                # Save the requested values even if their first application failed.
+                self._fixed_config = dict(config)
+                self.controls['brightness'] = config['Brightness']
+                self._open()  # Reconnect, reapply fixed settings, drain old frames.
+                report['fixed_settings_applied'] = True
+                frame = self._capture(config['capture_no'], (900, 1100, 0, 2590))
+                report['after'] = self._assess(config, frame)
+            except Exception as exc:
+                self._release()
+                self._publish(error=str(exc))
+                report['after'] = {'reasons': [f'{type(exc).__name__}: {exc}']}
         final = report['after'] or before
         report['status'] = 'FAIL' if final['reasons'] else 'IMAGE_AND_BRIGHTNESS_OK'
         report['allow_inference'] = not final['reasons']

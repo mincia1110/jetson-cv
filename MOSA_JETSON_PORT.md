@@ -39,3 +39,7 @@ python -c "import torch, torchvision, scipy, matplotlib, cv2, onnxruntime; print
 실제 모델·data.json·utils 코드는 기존 사내 MOSA 폴더에 그대로 둔다. pull만으로 사내 자원이 생성되지는 않는다.
 
 기존 jetson_runtime.json의 backend/provider/input_name/device/fps를 data.json 최상위에 옮긴다. engines 매핑은 각 model_X_path_engine으로 옮긴다. 이관 후 jetson_runtime.json 및 MOSA_RUNTIME_CONFIG는 제거 가능하다. 상대 경로는 기존과 같이 실행 작업 폴더 기준이다.
+
+자동복구는 data.json의 `reset_flag_en: true`로 활성화한다. 측정 시 초기 고정값을 적용하고, 영상 조건 실패나 명령/촬영 오류가 발생하면 한 번 재연결하여 현재 초기값을 재적용·재검사한다. 재검사 통과 시 새 프레임으로 추론하고 실패 시 팝업 없이 FAIL과 사유를 표시한다. 전체 before/after 보고서는 터미널에 출력한다. 광량이 계속 기준 밖이면 추론하지 않는다.
+
+측정 log.csv의 마지막 열 backend에 실제 로드한 onnx/tensorrt를 기록한다. 기존 형식의 로그는 처음 기록할 때 backend 열을 추가하며 이전 행은 unknown으로 보존한다. 실행 중 data.json의 backend만 바꿔도 이미 로드한 추론기는 바뀌지 않으므로 전환 시 앱을 재시작한다.

@@ -57,7 +57,14 @@ from utils.transforms import get_transform
 # Jetson bridge lives beside this main in scripts/.
 BRIDGE_DIR = Path(__file__).resolve().parent / 'scripts'
 sys.path.insert(0, str(BRIDGE_DIR))
-from mosa_jetson_bridge import MOSACamera, MOSAInferencer, camera_config, model_runtime, read_mosa_data, user_th_inference
+from mosa_jetson_bridge import MOSACamera, MOSAInferencer, append_measurement_log, camera_config, model_runtime, read_mosa_data, user_th_inference
+def show_config_error(exc):
+    detail = (f"설정 파일: {Path('data.json').resolve()}\n"
+              f"{type(exc).__name__}: {exc}")
+    print(detail, file=sys.stderr, flush=True)
+    messagebox.showerror("data.json 읽기 실패", detail)
+
+
 def read_camera_settings():
     return camera_config(read_mosa_data())
 
@@ -127,9 +134,9 @@ def show_model_selection_gui():
         model_E_name = data.get("model_E_name", "Model E")
         model_E_path_vis = data.get("model_E_path_vis", None)
         model_E_path_sub = data.get("model_E_path_sub", None)
-    except:
-        messagebox.showwarning("경고", "JSON file load Failed!")
-        sys.exit()
+    except Exception as exc:
+        show_config_error(exc)
+        sys.exit(1)
 
 
     def select_model_a():
@@ -865,9 +872,9 @@ class CameraGUI:
             return False  # Fixed settings are applied and checked at each capture.
 
 
-        except:
-            messagebox.showwarning("경고", "JSON file load Failed!")
-            sys.exit()
+        except Exception as exc:
+            show_config_error(exc)
+            sys.exit(1)
 
     def reset_camera(self):
         self.camera.reconnect().result()
@@ -990,9 +997,7 @@ class CameraGUI:
             return
 
         with self.frame_lock:
-            if self.current_frame is None:
-                messagebox.showerror("오류", "카메라 프레임이 없습니다.")
-                return
+            # Missing preview must not prevent worker reconnect/recovery.
             # frame_to_save = self.current_frame.copy()
             # print(" jpg type : ", type(frame_to_save))
 
@@ -1075,10 +1080,14 @@ class CameraGUI:
         if self.Camera_or_BMP_flag == 1:
             captured = self.camera.prepare_inference(self.camera_settings).result()
             self.camera_report = captured['report']
+            print('[Camera check]', json.dumps(self.camera_report, ensure_ascii=False), flush=True)
             if captured['frame'] is None:
                 self.result_container.config(bg='blue')
                 self.result_label.config(text='FAIL', bg='blue')
-                messagebox.showerror('Camera condition failed', json.dumps(self.camera_report, ensure_ascii=False))
+                final = self.camera_report.get('after') or self.camera_report['before']
+                recovery = ('초기값 재입력·재검사 실패' if self.camera_report['reset_performed']
+                            else '자동복구 꺼짐: data.json의 reset_flag_en 확인')
+                self.last_save_label.config(text=recovery + '\n' + '\n'.join(final['reasons']))
                 return
             frame_to_save = captured['frame']
 
@@ -1384,20 +1393,18 @@ class CameraGUI:
         # =============== log 파일 저장 ================
         if self.Data_log_flag == 1:
             csvfilepath = os.path.join(self.CSV_path, "log.csv")
-            file_exists = os.path.isfile(csvfilepath)  # 파일이 없으면 헤더 생성
             AutoExposure = 'OFF commanded; readback unavailable'
             Exposure = self.ExposureTime + ' requested; readback unavailable'
             Brightness = self.camera_report.get('after') or self.camera_report.get('before', {})
             Brightness = Brightness.get('brightness_control', 'unavailable')
-            with open(csvfilepath, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                if not file_exists:  # 처음 생성 시 헤더 작성
-                    writer.writerow(
-                        ["Date", "Model", "File name", "NG/OK ", "anomaly score", "anomaly label", "threshold", "밝기값", "RG_diff",
-                         "Reset", "AutoExposure", "ExposureValue", "Brightness", "BRIGHT_min", "BRIGHT_max", "RG_gab"])
-                writer.writerow([date, self.selected_model_name, f"{name}.bmp", result, str(pred_score), str(pred_label), self.user_threshold,
-                                 bright_sampling, RG_diff, self.reset_flag, AutoExposure, Exposure, Brightness,
-                                 self.BRIGHT_min, self.BRIGHT_max, self.RG_gab])  # CSV에 저장
+            append_measurement_log(
+                csvfilepath,
+                ["Date", "Model", "File name", "NG/OK ", "anomaly score", "anomaly label", "threshold", "밝기값", "RG_diff",
+                 "Reset", "AutoExposure", "ExposureValue", "Brightness", "BRIGHT_min", "BRIGHT_max", "RG_gab"],
+                [date, self.selected_model_name, f"{name}.bmp", result, str(pred_score), str(pred_label), self.user_threshold,
+                 bright_sampling, RG_diff, self.reset_flag, AutoExposure, Exposure, Brightness,
+                 self.BRIGHT_min, self.BRIGHT_max, self.RG_gab],
+                self.inferencer.backend_name)
 
         sec = time.time() - first_time
         print("= [Total Time]  : ", datetime.timedelta(seconds=sec))
