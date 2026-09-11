@@ -57,16 +57,9 @@ from utils.transforms import get_transform
 # Jetson bridge lives beside this main in scripts/.
 BRIDGE_DIR = Path(__file__).resolve().parent / 'scripts'
 sys.path.insert(0, str(BRIDGE_DIR))
-from mosa_jetson_bridge import MOSACamera, MOSAInferencer, camera_config, user_th_inference
-RUNTIME_PATH = Path(os.environ.get('MOSA_RUNTIME_CONFIG', 'jetson_runtime.json'))
-
-def read_runtime():
-    return json.loads(RUNTIME_PATH.read_text(encoding='utf-8'))
-
+from mosa_jetson_bridge import MOSACamera, MOSAInferencer, camera_config, model_runtime, read_mosa_data, user_th_inference
 def read_camera_settings():
-    # Dedicated camera JSON avoids interpreting Windows ExposureValue as time.
-    path = Path(read_runtime()['camera_config'])
-    return camera_config(json.loads(path.read_text(encoding='utf-8')))
+    return camera_config(read_mosa_data())
 
 
 # Constants
@@ -115,12 +108,10 @@ def show_model_selection_gui():
     selected_vis_model = {"path": None}
     selected_sub_model = {"path": None}
     selected_model_name = None
+    selected_slot = None
 
     try:
-        with open('data.json', 'r', encoding='utf-8') as file:
-            json_data = file.read()
-        json_data = re.sub(r'//.*', '', json_data)
-        data = json.loads(json_data)
+        data = read_mosa_data()
         model_A_name = data.get("model_A_name", "Model A")
         model_A_path_vis = data.get("model_A_path_vis", None)
         model_A_path_sub = data.get("model_A_path_sub", None)
@@ -142,7 +133,8 @@ def show_model_selection_gui():
 
 
     def select_model_a():
-        nonlocal selected_model_name
+        nonlocal selected_model_name, selected_slot
+        selected_slot = "A"
         selected_model_name = model_A_name
         selected_vis_model["path"] = model_A_path_vis
         selected_sub_model["path"] = model_A_path_sub
@@ -150,7 +142,8 @@ def show_model_selection_gui():
         root.destroy()
 
     def select_model_b():
-        nonlocal selected_model_name
+        nonlocal selected_model_name, selected_slot
+        selected_slot = "B"
         selected_model_name = model_B_name
         selected_vis_model["path"] = model_B_path_vis
         selected_sub_model["path"] = model_B_path_sub
@@ -158,7 +151,8 @@ def show_model_selection_gui():
         root.destroy()
 
     def select_model_c():
-        nonlocal selected_model_name
+        nonlocal selected_model_name, selected_slot
+        selected_slot = "C"
         selected_model_name = model_C_name
         selected_vis_model["path"] = model_C_path_vis
         selected_sub_model["path"] = model_C_path_sub
@@ -166,7 +160,8 @@ def show_model_selection_gui():
         root.destroy()
 
     def select_model_d():
-        nonlocal selected_model_name
+        nonlocal selected_model_name, selected_slot
+        selected_slot = "D"
         selected_model_name = model_D_name
         selected_vis_model["path"] = model_D_path_vis
         selected_sub_model["path"] = model_D_path_sub
@@ -174,7 +169,8 @@ def show_model_selection_gui():
         root.destroy()
 
     def select_model_e():
-        nonlocal selected_model_name
+        nonlocal selected_model_name, selected_slot
+        selected_slot = "E"
         selected_model_name = model_E_name
         selected_vis_model["path"] = model_E_path_vis
         selected_sub_model["path"] = model_E_path_sub
@@ -261,7 +257,7 @@ def show_model_selection_gui():
 
     root.mainloop()
 
-    return selected_model_name, selected_vis_model["path"], selected_sub_model["path"]
+    return selected_model_name, selected_vis_model["path"], selected_sub_model["path"], (model_runtime(data, selected_slot) if selected_slot else None)
 
 
 
@@ -567,7 +563,7 @@ img_size_w = 448
 # 카메라 초기화
 # -----------------------------`
 def camera_init():
-    runtime = read_runtime()
+    runtime = read_mosa_data()
     camera = MOSACamera(device=runtime.get('device', '/dev/video0'),
                         fps=runtime.get('fps', 10), initial_config=read_camera_settings())
     try:
@@ -841,10 +837,7 @@ class CameraGUI:
 
     def load_json(self):
         try:
-            with open('data.json', 'r', encoding='utf-8') as file:
-                json_data = file.read()
-            json_data = re.sub(r'//.*', '', json_data)
-            data = json.loads(json_data)
+            data = read_mosa_data()
             self.CSV_path = data["CSV_path"]
             self.BRIGHT_min = data["BRIGHT_min"]
             self.BRIGHT_max = data["BRIGHT_max"]
@@ -857,10 +850,11 @@ class CameraGUI:
             self.Camera_or_BMP_flag = data["Camera_or_BMP_flag"]
             self.reset_flag_en = data["reset_flag_en"]
             self.AI_result_flag = data["AI_result_flag"]
-            self.ExposureValue = data["ExposureValue"]
+            self.ExposureValue = data.get("ExposureValue")
             self.Brightness = data["Brightness"]
             self.capture_no = data["capture_no"]
-            settings = read_camera_settings()
+            settings = camera_config(data)
+            self.camera_settings = settings
             self.Brightness = settings['Brightness']
             self.ExposureTime = settings['ExposureTime']
             self.BRIGHT_min = settings['BRIGHT_min']
@@ -1079,7 +1073,7 @@ class CameraGUI:
         self.reset_flag = False
         self.camera_report = {'mode': 'file', 'exposure_readback': 'unavailable'}
         if self.Camera_or_BMP_flag == 1:
-            captured = self.camera.prepare_inference(read_camera_settings()).result()
+            captured = self.camera.prepare_inference(self.camera_settings).result()
             self.camera_report = captured['report']
             if captured['frame'] is None:
                 self.result_container.config(bg='blue')
@@ -1440,7 +1434,7 @@ if __name__ == "__main__":
         pass
 
     # 모델 선택 GUI 먼저 표시
-    selected_model_name, model_path_vis, model_path_sub = show_model_selection_gui()
+    selected_model_name, model_path_vis, model_path_sub, runtime = show_model_selection_gui()
 
     if model_path_vis is None:
         print("모델이 선택되지 않았습니다. 프로그램을 종료합니다.")
@@ -1450,7 +1444,7 @@ if __name__ == "__main__":
     print(f"-sub 모델: {model_path_sub}")
 
     # 모델 로드
-    inferencer = MOSAInferencer(model_path_vis, read_runtime())
+    inferencer = MOSAInferencer(model_path_vis, runtime)
     subspace_config_path = model_path_sub
     cache_dir_path = "./dinov2_cache"
 

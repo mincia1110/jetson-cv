@@ -1,8 +1,10 @@
 """Narrow compatibility bridge for the supplied MOSA main (no GUI redesign)."""
 import json
+import re
 from pathlib import Path
 import numpy as np
 import torch
+from camera_conditions import validate_conditions
 from dinolite_camera import DinoLiteCamera
 from inference_backend import open_backend
 from visualad_adapter import postprocess
@@ -14,10 +16,33 @@ class MOSACamera(DinoLiteCamera):
         return super()._capture(count, (0, self.height, 0, self.width))
 
 
+def read_mosa_data(path='data.json'):
+    """Read the original MOSA config, preserving // inside JSON strings."""
+    text = Path(path).read_text(encoding='utf-8-sig')
+    text = re.sub(r'"(?:\\.|[^"\\])*"|//[^\r\n]*',
+                  lambda match: '' if match.group().startswith('//') else match.group(), text)
+    return json.loads(text)
+
+
 def camera_config(data):
     config = dict(data)
     config['reset_flag_en'] = bool(config.get('reset_flag_en', False))
     config['exposure_reset_mode'] = 'fixed'
+    return validate_conditions(config)
+
+
+def model_runtime(data, slot):
+    """Resolve by selected A–E slot, even when two slots share an ONNX path."""
+    if slot not in ('A', 'B', 'C', 'D', 'E'):
+        raise ValueError(f'Unknown model slot: {slot}')
+    config = {key: data[key] for key in ('backend', 'provider', 'input_name') if key in data}
+    config.setdefault('backend', 'onnx')
+    if config['backend'] == 'tensorrt':
+        key = f'model_{slot}_path_engine'
+        engine = data.get(key)
+        if not isinstance(engine, str) or not engine.strip():
+            raise ValueError(f'data.json: {key}에 선택한 모델의 TensorRT engine 경로를 입력하세요.')
+        config['engine'] = engine
     return config
 
 
@@ -27,12 +52,8 @@ class MOSAInferencer:
         config = dict(runtime)
         config['onnx'] = onnx_path
         if config.get('backend', 'onnx') == 'tensorrt':
-            # Explicit mapping permits the existing A/B/C/D/E model chooser.
-            mapping = config.get('engines', {})
-            engine = mapping.get(onnx_path, config.get('engine'))
-            if not engine:
-                raise ValueError(f'No TensorRT engine configured for {onnx_path}')
-            config['engine'] = engine
+            if not config.get('engine'):
+                raise ValueError('Selected model has no TensorRT engine path')
         config.setdefault('backend', 'onnx')
         self.backend = open_backend(config)
         self.backend.__enter__()

@@ -1,3 +1,5 @@
+> 클린 Jetson부터 MOSA 메인 실행까지는 [통합 워크플로](JETSON_MOSA_WORKFLOW.md)를 먼저 읽으세요.
+
 # Jetson VisualAD 실행환경
 
 Orin Nano Super Developer Kit + microSD + DP 모니터 + USB 키보드/마우스용 준비 키트.

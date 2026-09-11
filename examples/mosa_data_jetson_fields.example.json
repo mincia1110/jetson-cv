@@ -1,0 +1,17 @@
+{
+  "backend": "onnx",
+  "provider": "CUDAExecutionProvider",
+  "input_name": "input",
+  "device": "/dev/video0",
+  "fps": 10,
+  "model_A_path_vis": "./models/A/model.onnx",
+  "model_A_path_engine": "./models/A/model.engine",
+  "model_B_path_vis": "./models/B/model.onnx",
+  "model_B_path_engine": "./models/B/model.engine",
+  "model_C_path_vis": "./models/C/model.onnx",
+  "model_C_path_engine": "./models/C/model.engine",
+  "model_D_path_vis": "./models/D/model.onnx",
+  "model_D_path_engine": "./models/D/model.engine",
+  "model_E_path_vis": "./models/E/model.onnx",
+  "model_E_path_engine": "./models/E/model.engine"
+}
