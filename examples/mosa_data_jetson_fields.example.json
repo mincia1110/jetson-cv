@@ -13,5 +13,15 @@
   "model_D_path_vis": "./models/D/model.onnx",
   "model_D_path_engine": "./models/D/model.engine",
   "model_E_path_vis": "./models/E/model.onnx",
-  "model_E_path_engine": "./models/E/model.engine"
+  "model_E_path_engine": "./models/E/model.engine",
+  "video_controls": {
+    "white_balance_automatic": 0,
+    "white_balance_temperature": 5800,
+    "contrast": 16,
+    "saturation": 32,
+    "hue": 0,
+    "gamma": 5,
+    "sharpness": 0,
+    "power_line_frequency": 2
+  }
 }

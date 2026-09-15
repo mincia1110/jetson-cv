@@ -14,8 +14,33 @@ EXPOSURE_COMMANDS = {
 }
 
 
+# AM7115MZT ranges reported by v4l2-ctl on the target Jetson.
+VIDEO_CONTROL_RANGES = {
+    'white_balance_automatic': (0, 1),
+    'contrast': (1, 32), 'saturation': (1, 128), 'hue': (-6, 6),
+    'gamma': (1, 12), 'sharpness': (0, 10),
+    'power_line_frequency': (0, 2), 'white_balance_temperature': (2800, 6500),
+}
+
+
+def validate_video_controls(config):
+    controls = config.get('video_controls', {})
+    if not isinstance(controls, dict):
+        raise ValueError('video_controls must be an object')
+    for name, value in controls.items():
+        if name not in VIDEO_CONTROL_RANGES:
+            raise ValueError(f'Unsupported video control: {name}')
+        low, high = VIDEO_CONTROL_RANGES[name]
+        if type(value) is not int or not low <= value <= high:
+            raise ValueError(f'{name}: integer {low}..{high} required')
+    if 'white_balance_temperature' in controls and controls.get('white_balance_automatic') != 0:
+        raise ValueError('Fixed white_balance_temperature requires white_balance_automatic=0')
+    return dict(controls)
+
+
 def validate_conditions(config):
     result = dict(config)
+    result['video_controls'] = validate_video_controls(config)
     for key in ('BRIGHT_min', 'BRIGHT_max', 'RG_gab'):
         value = result[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):

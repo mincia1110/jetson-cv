@@ -25,6 +25,7 @@ class FakeCamera(module.DinoLiteCamera):
         self.sequence = 0
         self.fail = False
         self.brightness = 0
+        self.video_values = {}
         super().__init__(width=4, height=3)
 
     def record(self, kind):
@@ -55,6 +56,12 @@ class FakeCamera(module.DinoLiteCamera):
             self.brightness = int(args[-1].split('=')[-1])
         if args[-1] == '--get-ctrl=brightness':
             return f'brightness: {self.brightness}'
+        if args[-1].startswith('--set-ctrl='):
+            name, value = args[-1].split('=', 1)[1].split('=')
+            self.video_values[name] = int(value)
+        if args[-1].startswith('--get-ctrl='):
+            name = args[-1].split('=', 1)[1]
+            return f'{name}: {self.video_values[name]}'
 
     def _capture(self, count, roi):
         if roi == (900, 1100, 0, 2590):
@@ -102,6 +109,37 @@ class CameraTests(unittest.TestCase):
         self.camera.close()
         with self.assertRaisesRegex(RuntimeError, 'closed'):
             self.camera.capture().result(timeout=2)
+
+    def test_manual_white_balance_order_and_reconnect(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'Brightness': 16, 'ExposureTime': '1/60s',
+                  'video_controls': {'white_balance_temperature': 5800,
+                                     'white_balance_automatic': 0, 'gamma': 5}}
+        self.camera.apply_initial(config).result(timeout=2)
+        self.camera.reconnect().result(timeout=2)
+        commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+        awb = '--set-ctrl=white_balance_automatic=0'
+        temp = '--set-ctrl=white_balance_temperature=5800'
+        self.assertLess(commands.index(awb), commands.index(temp))
+        self.assertEqual(commands.count(awb), 2)
+        self.assertEqual(commands.count(temp), 2)
+        self.assertEqual(self.camera.video_values['gamma'], 5)
+
+    def test_video_controls_reject_invalid_and_inactive_settings(self):
+        base = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                'Brightness': 16, 'ExposureTime': '1/60s'}
+        for controls in ({'gamma': 13}, {'gain': 0},
+                         {'white_balance_temperature': 5800}):
+            with self.assertRaises(ValueError):
+                self.camera.apply_initial(dict(base, video_controls=controls))
+
+    def test_video_readback_mismatch_is_failure(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'Brightness': 16, 'ExposureTime': '1/60s', 'video_controls': {'gamma': 5}}
+        with patch.object(self.camera, '_video_control_values', return_value={'gamma': 6}):
+            result = self.camera.prepare_inference(config).result(timeout=2)
+        self.assertIsNone(result['frame'])
+        self.assertIn('gamma', result['report']['before']['reasons'][0])
 
     def test_condition_reset_once_and_recheck_failure(self):
         config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,

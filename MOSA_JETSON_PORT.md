@@ -43,3 +43,9 @@ python -c "import torch, torchvision, scipy, matplotlib, cv2, onnxruntime; print
 자동복구는 data.json의 `reset_flag_en: true`로 활성화한다. 측정 시 초기 고정값을 적용하고, 영상 조건 실패나 명령/촬영 오류가 발생하면 한 번 재연결하여 현재 초기값을 재적용·재검사한다. 재검사 통과 시 새 프레임으로 추론하고 실패 시 팝업 없이 FAIL과 사유를 표시한다. 전체 before/after 보고서는 터미널에 출력한다. 광량이 계속 기준 밖이면 추론하지 않는다.
 
 측정 log.csv의 마지막 열 backend에 실제 로드한 onnx/tensorrt를 기록한다. 기존 형식의 로그는 처음 기록할 때 backend 열을 추가하며 이전 행은 unknown으로 보존한다. 실행 중 data.json의 backend만 바꿔도 이미 로드한 추론기는 바뀌지 않으므로 전환 시 앱을 재시작한다.
+
+## 영상 속성 재현
+
+`examples/mosa_data_jetson_fields.example.json`의 `video_controls` 객체를 기존 data.json에 병합한다. 밝기는 기존 최상위 Brightness를 사용한다. 객체를 생략하면 이전처럼 추가 영상 속성을 설정하지 않는다. 최초 시작·측정 전·재연결 복구 시 적용하며, 자동 화이트밸런스를 먼저 끈 뒤 색온도를 설정하고 모든 지정 항목을 readback 검증한다. 변경은 다음 측정부터 반영된다. 항목을 삭제하면 기존 장치 값을 되돌리지는 않는다.
+
+AM7115MZT 사용자 제공 범위로 검증한다. 예제의 대비16/채도32/색조0/감마5/선명도0/색온도5800은 기존 Windows 코드의 요청값이다. 실제 Windows readback 및 이미지 동등성은 별도 검증한다. power_line_frequency=2는 현재 Jetson의 60Hz 설정을 유지하는 값이며 LED 제어가 아니다. ColorEnable/BacklightCompensation/Gain은 해당 장치 UVC 목록에 없어 보내지 않는다. focus_absolute도 inactive 상태이므로 이번 영상 속성 설정에 포함하지 않는다.

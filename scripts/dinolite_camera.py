@@ -167,12 +167,32 @@ class DinoLiteCamera:
         actual = self._brightness()
         if actual != config['Brightness']:
             raise RuntimeError(f"Brightness 적용 실패: target={config['Brightness']}, actual={actual}")
+        self._apply_video_controls(config)
         self._fixed_config = dict(config)
         self.controls['brightness'] = config['Brightness']
         for _ in range(config['settle_frames']):
             self._publish(self._read())
         return {'Brightness': actual, 'ExposureTime_requested': config['ExposureTime'],
                 'exposure_readback': 'unavailable', 'mode': 'fixed'}
+
+    def _video_control_values(self, config):
+        values = {}
+        for name in config.get('video_controls', {}):
+            output = self._command(['v4l2-ctl', '-d', self.device, f'--get-ctrl={name}'])
+            values[name] = int(output.rsplit(':', 1)[1].strip())
+        return values
+
+    def _apply_video_controls(self, config):
+        controls = config.get('video_controls', {})
+        # Separate commands ensure AWB is disabled before manual temperature.
+        names = sorted(controls, key=lambda name: name != 'white_balance_automatic')
+        for name in names:
+            self._command(['v4l2-ctl', '-d', self.device,
+                           f'--set-ctrl={name}={controls[name]}'])
+        actual = self._video_control_values(config)
+        for name, requested in controls.items():
+            if actual[name] != requested:
+                raise RuntimeError(f'{name} 적용 실패: target={requested}, actual={actual[name]}')
 
     def _brightness(self):
         output = self._command(['v4l2-ctl', '-d', self.device, '--get-ctrl=brightness'])
@@ -183,6 +203,10 @@ class DinoLiteCamera:
         report['brightness_control'] = self._brightness()
         if config.get('Brightness') is not None and report['brightness_control'] != config['Brightness']:
             report['reasons'].append('Brightness setting mismatch')
+        report['video_controls'] = self._video_control_values(config)
+        for name, requested in config.get('video_controls', {}).items():
+            if report['video_controls'][name] != requested:
+                report['reasons'].append(f'{name} setting mismatch')
         report['ae_last_command'] = self._auto_exposure
         report['exposure_readback'] = 'unavailable: AE command state is not shutter readback'
         if self._auto_exposure is True:
