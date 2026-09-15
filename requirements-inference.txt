@@ -8,6 +8,8 @@ polygraphy==0.49.9
 # Install a platform-compatible torch build separately; avoid replacing Jetson's
 # existing NVIDIA build through an unpinned pip upgrade.
 scipy>=1.10,<1.14
+# MOSA Tk GUI uses matplotlib directly; retain NumPy 1.x-compatible baseline.
+matplotlib>=3.5,<3.9
 # Required by the existing MOSA / VisualAD import chain (reported on Jetson).
 tqdm
 ftfy

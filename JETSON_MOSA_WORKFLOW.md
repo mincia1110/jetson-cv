@@ -1,6 +1,6 @@
 # 클린 Jetson → MOSA 메인 실행 통합 워크플로
 
-이 문서가 설치·실행 절차의 통합 진입점이다. 목표는 Jetson Orin Nano Super에서 Dino-Lite를 제어하고 `MOSA_visualAD_comb_jetson.py`를 ONNX CUDA로 실행한 뒤 TensorRT로 전환하여 오프라인 운용하는 것이다. 진행 중 새 의존성·오류가 확인되면 해당 단계와 마지막 검증 표를 갱신한다.
+이 문서가 설치·실행 절차의 통합 진입점이다. 목표는 Jetson Orin Nano Super에서 Dino-Lite를 제어하고 `MOSA_visualAD_comb_jetson.py`를 ONNX CUDA로 실행하여 오프라인 운용하는 것이다. TensorRT 전환은 선택 사항이다. ONNX 속도는 사용자 요구에 충분했으며, 현재 우선순위는 Windows GUI와 anomaly score 및 카메라 조건 비교다. TRT 양자화는 후순위다. 진행 중 새 의존성·오류가 확인되면 해당 단계와 마지막 검증 표를 갱신한다.
 
 ## 0. 기준 환경과 준비물
 
@@ -15,7 +15,14 @@
 
 ## 1. OS 설치와 시스템 확인
 
-Windows에서 JetPack 6.2.1 Orin Nano 개발 키트용 SD 이미지를 받아 microSD에 기록하고 Jetson을 부팅한다. 사용자 생성·네트워크 연결을 완료한다. 이미지 기록은 카드 내용을 지우므로 대상 카드를 확인한다. 공식 [시작 안내](https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit), [펌웨어 안내](https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/latest/update_firmware.html)를 따른다.
+1. Windows PC에서 [JetPack 6.2.1 전용 페이지](https://developer.nvidia.com/embedded/jetpack-sdk-621)의 **Orin Nano Developer Kit SD card image**를 받는다. 최신 버전 일반 링크에서 다른 JetPack을 받지 않는다.
+2. balenaEtcher에서 이미지 ZIP 선택 → 대상 microSD 선택 → Flash → 검증 완료까지 기다린다. 기록 후 Windows가 포맷을 제안하면 취소한다.
+3. Jetson 전원을 끈 상태에서 microSD, DP 모니터, USB 키보드·마우스를 연결하고 부팅한다. microSD는 부팅뿐 아니라 Ubuntu·프로젝트·패키지·결과 저장에도 사용한다. `df -h /`로 여유 공간을 확인한다.
+4. JetPack 5.x용 구형 펌웨어 장치는 공식 초기 펌웨어 업데이트가 선행돼야 한다. 이번 사용자 장치에서는 UEFI 36.4.7을 확인했으며, 이미 JetPack 6.2.1로 구동 중인 보드에 펌웨어 업데이트를 반복할 필요는 없다.
+
+Etcher에서 `h.requestMetadata` 계열 오류가 발생했던 이력이 있다. 구버전이 필요한 경우 [공식 Releases](https://github.com/balena-io/etcher/releases)에서 해당 Windows 설치 파일을 받는다. 1.18.11은 당시 검토한 우회 후보이며 필수 버전이나 검증 완료 버전으로 간주하지 않는다.
+
+ 사용자 생성·네트워크 연결을 완료한다. 이미지 기록은 카드 내용을 지우므로 대상 카드를 확인한다. 공식 [시작 안내](https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit), [펌웨어 안내](https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/latest/update_firmware.html)를 따른다.
 
 ```bash
 cat /etc/os-release
@@ -31,26 +38,25 @@ python3 --version
 
 ```bash
 sudo apt-get update
-sudo apt-get install git
+sudo apt-get install git wget
 mkdir -p ~/Documents/MOSA
 cd ~/Documents/MOSA
 git clone https://github.com/mincia1110/jetson-cv.git
 cd jetson-cv
 bash scripts/setup_jetson.sh
-sudo apt-get install python3-tk python3-pil.imagetk uvcdynctrl
 ```
 
-이미 clone했다면 해당 폴더에서 `git pull origin main`만 한다. setup_jetson.sh는 nvidia-jetpack, venv, pip, 시스템 OpenCV·NumPy, v4l-utils, usbutils와 기본 추론 도구를 설치한다. 모델별 의존성을 모두 설치하는 스크립트는 아니다.
+이미 clone했다면 해당 폴더에서 `git pull origin main`만 한다. setup_jetson.sh는 nvidia-jetpack, venv, pip, 시스템 OpenCV·NumPy, Tk/ImageTk, uvcdynctrl, v4l-utils, usbutils, wget과 기본 추론 도구를 설치한다. 모델별 의존성을 모두 설치하는 스크립트는 아니다.
 
 ## 3. 가상환경
 
-setup 스크립트가 `.venv`를 만든다. 수동 생성할 때는 다음 명령을 사용한다.
+setup 스크립트가 `.venv`를 만든다. 아래 생성 명령은 아직 venv가 없을 때만 실행하고, 이미 있으면 활성화부터 진행한다.
 
 ```bash
-python3 -m venv --system-site-packages .venv
+test -d .venv || python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install -r requirements-inference.txt
-python -m pip install 'matplotlib<3.9' 'numpy<2'
+python -m pip check
 ```
 
 `virtualenv` 패키지는 필요 없다. `--system-site-packages`는 JetPack TensorRT와 시스템 OpenCV 등을 공유하기 위한 옵션이다. 기존 venv를 활성화했다면 재생성하지 않는다. `sudo pip`를 사용하지 않는다. NumPy는 시스템 OpenCV와 호환하도록 1.x 범위를 유지한다.
@@ -65,11 +71,11 @@ python -c "import sys, cv2, numpy, tkinter; from PIL import ImageTk; print(sys.e
 Python 3.10 / JetPack 6.x / CUDA 12.6 기준:
 
 ```bash
-python -m pip install --index-url https://pypi.jetson-ai-lab.io/jp6/cu126 onnxruntime-gpu 'numpy<2'
+python -m pip install --index-url https://pypi.jetson-ai-lab.io/jp6/cu126 'onnxruntime-gpu==1.24.0' 'numpy<2'
 python -c "import onnxruntime as o; print(o.__version__); print(o.get_available_providers())"
 ```
 
-사용자 환경에서 ORT 1.24.0과 CUDAExecutionProvider를 확인했고 실제 0 입력 실행도 완료했다. 재현 설치는 검증 후 wheel과 버전을 보관한다. 인덱스 내용은 바뀔 수 있으므로 설치가 되었다는 사실만으로 동일 빌드라고 간주하지 않는다. [NVIDIA의 JetPack 6.2.1 안내](https://forums.developer.nvidia.com/t/onnx-runtime-for-jetpack-6-2-1/359081).
+사용자 환경에서 ORT 1.24.0과 CUDAExecutionProvider를 확인했고 실제 0 입력 실행도 완료했다. 위 버전은 기존 사용자 환경에서 확인한 값이다. 해당 인덱스에서 Python 3.10/aarch64 wheel을 더 이상 제공하지 않으면 버전을 임의로 바꾸지 말고 기존 장비에서 보관한 wheel이나 호환 빌드를 확인한다. 재현 설치는 검증 후 wheel과 버전을 보관한다. 인덱스 내용은 바뀔 수 있으므로 설치가 되었다는 사실만으로 동일 빌드라고 간주하지 않는다. [NVIDIA의 JetPack 6.2.1 안내](https://forums.developer.nvidia.com/t/onnx-runtime-for-jetpack-6-2-1/359081).
 
 `CUDAExecutionProvider`가 없으면 다음 단계 전에 해결한다. CPU provider가 목록에 함께 있다는 사실만으로 CPU 실행이라고 판단하지 않는다. 프로젝트 ONNX 실행부는 CUDA 요청 시 CPU fallback을 차단한다.
 
@@ -78,7 +84,7 @@ python -c "import onnxruntime as o; print(o.__version__); print(o.get_available_
 기존 MOSA의 get_transform은 torchvision을, VisualAD 후처리는 CPU torch·scipy를 사용한다. 모델 본체의 GPU 실행은 ONNX CUDA 또는 TensorRT다.
 
 ```bash
-python -m pip install torch torchvision 'numpy<2' --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+python -m pip install 'torch==2.11.0' 'torchvision==0.26.0' 'numpy<2' --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
 python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__); print('CUDA:', torch.cuda.is_available())"
 ```
 
@@ -177,6 +183,34 @@ python scripts/camera_control_gui.py --device /dev/video0 --config local/camera_
 
 MOSA 메인은 실행 작업 폴더의 **data.json만** 읽는다. MOSA_RUNTIME_CONFIG 환경변수와 jetson_runtime.json은 더 이상 사용하지 않으므로 이관 후 제거할 수 있다. 상대 모델·엔진 경로도 실행 작업 폴더 기준이다.
 
+### 영상 속성 및 노출
+
+기존 data.json에 다음 객체를 추가한다. 마지막 항목 뒤에는 쉼표를 넣지 않는다. 예제 파일 전체로 기존 모델·저장 설정을 덮어쓰지 않는다.
+
+```json
+"video_controls": {
+  "white_balance_automatic": 0,
+  "white_balance_temperature": 5800,
+  "contrast": 16,
+  "saturation": 32,
+  "hue": 0,
+  "gamma": 5,
+  "sharpness": 0,
+  "power_line_frequency": 2
+}
+```
+
+자동 WB가 켜져 있으면 색온도는 inactive다. 코드는 AWB OFF 후 색온도를 설정하고 지정값을 다시 읽어 확인한다. 초기 시작·다음 측정·복구에서 적용한다. 밝기는 최상위 Brightness 하나로 관리한다. 미노출 ColorEnable/BacklightCompensation/Gain 및 inactive focus는 설정하지 않는다. Windows의 요청값과 같아도 이미지 동등성은 별도 확인해야 한다.
+
+ExposureTime은 다음 문자열 중 하나다: `1/1000s`, `1/500s`, `1/250s`, `1/125s`, `1/60s`, `1/30s`, `1/15s`, `1/8s`, `1/4s`, `1/2s`, `1s`, `2s`, `4s`, `8s`, `16s`. 중간값은 미지원이다. 이는 USB 명령표의 이름이며 모든 값의 실제 셔터 시간을 검증한 것은 아니다. DNX64 ExposureValue와의 변환식은 확인되지 않았다.
+
+### 설정 반영·자동복구·로그
+
+- `reset_flag_en: 1` 또는 `true`: 실패 시 한 번 재연결 → 고정값 재적용 → 재검사. 0은 자동복구 OFF다. 계속 광량이 기준 밖이면 추론을 차단하며 GUI FAIL과 터미널 before/after를 확인한다.
+- 카메라 설정·검사기준은 다음 측정 시 다시 읽는다. backend·모델·엔진 경로·device/fps는 앱 재시작 후 적용한다.
+- `Data_log_flag: 1`일 때 CSV_path의 log.csv에 실제 실행 backend를 기록한다. 기존 로그는 backend 열을 추가하고 이전 행을 unknown으로 보존한다. CSV_path는 미리 존재하는 쓰기 가능한 Linux 폴더여야 한다.
+- Windows와 비교할 때 먼저 동일 BMP로 점수를 비교하고, 이후 고정 조명·시료·거리에서 카메라 설정을 조정한다. 이미지는 사내에서만 비교해도 된다.
+
 ## 9. ONNX 단독 검사
 
 저장소 루트에서 실제 모델 절대 경로로 실행한다. 출력 폴더는 매번 새 이름을 사용한다.
@@ -204,7 +238,7 @@ python -c "import torch, torchvision, scipy, matplotlib, cv2, onnxruntime; from 
 python /absolute/path/jetson-cv/MOSA_visualAD_comb_jetson.py
 ```
 
-모델 선택 → 폴더·이름·threshold 설정 → 측정 → 이미지/결과/CSV 저장 확인. 런타임 backend는 onnx로 둔다. 실제 utils가 추가 패키지를 요구하면 **import 오류에 나온 실제 의존성**을 확인해 설치하고 이 문서에 추가한다. 아직 전체 사내 import 체인은 검증되지 않았다.
+모델 선택 → 폴더·이름·threshold 설정 → 측정 → 이미지/결과/CSV 저장 확인. 런타임 backend는 onnx로 둔다. 실제 utils가 추가 패키지를 요구하면 **import 오류에 나온 실제 의존성**을 확인해 설치하고 이 문서에 추가한다. 사용자는 기존 사내 자원을 이용한 메인 ONNX 실행 성공을 확인했다. 새 장비에서 같은 버전과 import 체인이 재현되는지는 이 단계에서 확인한다.
 
 ## 11. TensorRT 변환·수치 비교
 
@@ -232,14 +266,14 @@ data.json을 backend=tensorrt로 바꾸고 모델별 model_A_path_engine ~ model
 mkdir -p artifacts/environment
 python -m pip freeze > artifacts/environment/pip-freeze.txt
 python -m pip check
-python scripts/doctor.py --help
+python scripts/doctor.py --output artifacts/environment/doctor.json
 dpkg-query -W > artifacts/environment/dpkg.txt
 git rev-parse HEAD > artifacts/environment/commit.txt
 ```
 
-위 환경 기록 명령은 저장소 루트에서 실행한다. pip freeze만으로 JetPack·apt 공유 라이브러리는 복원되지 않으므로 dpkg 목록과 이미지 버전, 설치 wheel/DEB, 모델/엔진 해시도 함께 보관한다. 완전한 오프라인 신규 설치용 wheelhouse/apt 미러는 현재 자동화되지 않았다. 목표는 온라인 세팅 후 오프라인 운용이다.
+doctor.json의 error 항목도 확인한다. doctor는 환경 조회이며 GPU 실행 성공을 대신하지 않는다. 위 환경 기록 명령은 저장소 루트에서 실행한다. pip freeze만으로 JetPack·apt 공유 라이브러리는 복원되지 않으므로 dpkg 목록과 이미지 버전, 설치 wheel/DEB, 모델/엔진 해시도 함께 보관한다. 완전한 오프라인 신규 설치용 wheelhouse/apt 미러는 현재 자동화되지 않았다. 목표는 온라인 세팅 후 오프라인 운용이다.
 
-## 진행 상태 — 2026-09-11
+## 진행 상태 — 2026-09-16
 
 | 단계 | 확인 상태 |
 | --- | --- |
@@ -250,7 +284,25 @@ git rev-parse HEAD > artifacts/environment/commit.txt
 | raw outputs 수치 비교 | 일부 출력 기본 오차 기준 초과, 보류 |
 | 공통 VisualAD 후처리 구현 | 로컬 테스트 완료, 사내 실제 결과 비교 필요 |
 | cuDSS 검색 오류 | 패키지 설치 후 경로 누락 확인, 경로 지정으로 해결 사용자 확인. 영구 등록·새 셸 확인은 별도 |
-| MOSA 메인 실행·ONNX 추론 | 사용자 실물 성공 확인 (설정 통합 전); 통합 후 재확인 필요 |
+| MOSA 메인 ONNX·TRT | 사용자 실행·성능 확인, ONNX 우선 운용 |
+| 영상 속성 초기화·readback | 구현 및 로컬 테스트 완료, 실물 적용 확인 필요 |
+| Windows GUI와 결과 일치 | 동일 BMP 점수 비교 → 동일 시료 촬영 조건 조정 예정 |
 | 네트워크 차단 후 재부팅·최종 인수 | 아직 미확인 |
 
 이 표는 증거가 생겼을 때 갱신한다. 사내 실제 설정·개별 로그와 자세한 일지는 로컬 PROGRESS.md에 기록한다.
+
+## 자주 발생한 오류
+
+| 증상 | 확인 및 조치 |
+| --- | --- |
+| virtualenv 없음 | 추가 설치 대신 `python3 -m venv --system-site-packages .venv` 사용 |
+| JSON file load Failed | 작업 폴더의 data.json 경로, 마지막 쉼표, 중괄호 확인. 새 코드는 오류 경로와 줄·열 출력 |
+| 고정 ExposureTime 선택 오류 | 실제 읽는 data.json에 정확한 시간 문자열 입력. null 또는 Windows ExposureValue로 대체 불가 |
+| 설정을 바꿨는데 미반영 | 다른 JSON을 수정했는지 확인. 메인은 data.json만 읽음. backend는 재시작 필요 |
+| mosa_jetson_bridge 모듈 없음 | 메인 파일만 복사하지 말고 저장소 scripts/까지 함께 유지 |
+| libcudss.so.0 없음 | 5단계에서 설치 여부와 검색 경로를 각각 점검 |
+| tqdm/ftfy/regex/sklearn/tabulate/skimage/seaborn 없음 | 같은 venv의 `python -m pip install -r requirements-inference.txt` 실행 |
+| cv2/NumPy ABI 오류 | 시스템 OpenCV 사용, numpy<2 유지. pip OpenCV를 중복 설치하지 않음 |
+| 자동복구 안 됨 | reset_flag_en=0인지 확인. 1로 설정해도 실제 광량 이상이 지속되면 FAIL 유지 |
+
+모든 설치가 끝나면 `python -m pip check`와 10단계 import 검사를 다시 수행한다. 이 문서는 확인된 작업 흐름이며, 새 SD에서 전체 절차를 처음부터 재실행한 인수 결과는 아직 없다.

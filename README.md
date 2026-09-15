@@ -3,8 +3,9 @@
 # Jetson VisualAD 실행환경
 
 Orin Nano Super Developer Kit + microSD + DP 모니터 + USB 키보드/마우스용 준비 키트.
-설치는 온라인, 운영은 오프라인. ONNX는 변환 입력이다. 대상 Jetson에서 TensorRT 엔진(.engine)을 만들고, 기존 Python/PyQt 앱은 촬영 → cv2 전처리 → TensorRT GPU 추론 → 결과 표시로 연결한다.
-실제 장비와 사내 모델은 아직 연결되지 않았으므로 이 폴더는 **환경 준비 자료이며 실기 검증 완료본이 아니다.**
+설치는 온라인, 운영은 오프라인. 현재 메인은 기존 Tkinter 구조를 유지한 `MOSA_visualAD_comb_jetson.py`이며 ONNX CUDA와 TensorRT를 지원한다. 사용자는 두 backend의 실행·성능을 확인했다. ONNX를 우선 운용하고, 남은 검증은 Windows GUI와 점수·촬영 조건 비교 및 오프라인 인수다.
+
+신규 설치는 위 통합 워크플로를 따른다. 아래는 초기 환경·TensorRT 도구의 세부 참고 절차다.
 
 ## 따라가는 순서와 완료 기준
 
@@ -39,9 +40,9 @@ Git을 사용하는 경우 인터넷 가능한 PC에서 `git clone https://githu
 | GPU 구성 | 해당 JetPack의 CUDA 12.6 / cuDNN 9.3 / TensorRT 10.3 |
 | Python | 시스템 Python 3.10 + system-site-packages venv |
 | 영상 입력 | Dino-Lite가 UVC 지원 시 V4L2 / OpenCV |
-| 화면 | 사내 PyQt 앱 재사용, PyQt 주 버전은 사내 확인 후 설치 |
+| 화면 | 기존 MOSA Tkinter GUI 재사용, python3-tk + Pillow ImageTk |
 | GPU 기본 점검 | NVIDIA trtexec + 작은 합성 ONNX |
-| 앱 추론 엔진 | TensorRT 10.3 엔진 직접 실행, NVIDIA Polygraphy TrtRunner 재사용 |
+| 앱 추론 엔진 | ONNX Runtime CUDA 우선 / TensorRT 10.3 + Polygraphy 선택 |
 
 6.2.1은 이 키트의 고정 기준이며 최신 전체 JetPack이라는 의미가 아니다. 현재 공식 빠른 시작 문서는 7.x ISO 경로를 안내하므로 아래 **6.2.1 전용 링크**를 사용한다. 사내 의존성이 이 기준과 충돌하면 설치 전에 기준을 조정한다.
 

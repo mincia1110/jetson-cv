@@ -13,7 +13,9 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     report = {'platform': platform.platform(), 'machine': platform.machine(), 'python': platform.python_version()}
-    for name in ('cv2', 'numpy', 'tensorrt', 'polygraphy', 'PyQt5.QtCore', 'PyQt6.QtCore'):
+    for name in ('cv2', 'numpy', 'tensorrt', 'polygraphy', 'tkinter', 'PIL.ImageTk', 'onnxruntime',
+                 'torch', 'torchvision', 'scipy', 'matplotlib', 'tqdm', 'ftfy',
+                 'regex', 'sklearn', 'tabulate', 'skimage', 'seaborn'):
         try:
             mod = importlib.import_module(name)
             report[name] = {'version': getattr(mod, '__version__', getattr(mod, 'PYQT_VERSION_STR', 'unknown'))}
