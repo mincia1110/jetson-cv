@@ -40,7 +40,26 @@ def validate_video_controls(config):
 
 def validate_conditions(config):
     result = dict(config)
-    result['video_controls'] = validate_video_controls(config)
+    profile = result.get('camera_profile', 'fixed')
+    if profile not in ('fixed', 'windows_800', 'windows_800_full'):
+        raise ValueError('camera_profile must be fixed, windows_800 or windows_800_full')
+    result['camera_profile'] = profile
+    if profile in ('windows_800', 'windows_800_full'):
+        if result.get('ExposureValue', 800) != 800:
+            raise ValueError('windows_800 supports ExposureValue 800 only')
+        result['ExposureTime'] = 'DNX64:800'  # Label, not seconds.
+        defaults = {'contrast': 16, 'hue': 0, 'saturation': 32, 'sharpness': 0,
+                    'gamma': 5, 'white_balance_automatic': 0,
+                    'white_balance_temperature': 5800, 'power_line_frequency': 2}
+        if profile == 'windows_800_full':
+            if result.get('Brightness') != 16:
+                raise ValueError('windows_800_full requires captured Brightness=16')
+            for key, value in result.get('video_controls', {}).items():
+                if key not in defaults or defaults[key] != value:
+                    raise ValueError(f'windows_800_full requires captured video_controls: {key}')
+        defaults.update(result.get('video_controls', {}))
+        result['video_controls'] = defaults
+    result['video_controls'] = validate_video_controls(result)
     for key in ('BRIGHT_min', 'BRIGHT_max', 'RG_gab'):
         value = result[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -58,7 +77,7 @@ def validate_conditions(config):
     result.setdefault('reset_flag_en', False)
     if type(result.get('Brightness')) is not int:
         raise ValueError('초기 Brightness를 Linux V4L2 정수로 입력하세요.')
-    if result.get('ExposureTime') not in EXPOSURE_COMMANDS:
+    if profile == 'fixed' and result.get('ExposureTime') not in EXPOSURE_COMMANDS:
         raise ValueError(f"고정 ExposureTime을 선택하세요. 읽은 값={result.get('ExposureTime')!r}. "
                          '예: "ExposureTime": "1/60s". DLL ExposureValue의 숫자는 자동 변환하지 않습니다.')
     if result.get('exposure_reset_mode', 'fixed') != 'fixed':

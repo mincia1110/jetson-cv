@@ -32,6 +32,7 @@ class FakeCamera(module.DinoLiteCamera):
         self.calls.append((kind, threading.get_ident()))
 
     def _open(self):
+        self._windows_initialized = False
         self.record('open')
         self._cap = object()
         self._publish(np.zeros((3, 4, 3), dtype=np.uint8))
@@ -109,6 +110,42 @@ class CameraTests(unittest.TestCase):
         self.camera.close()
         with self.assertRaisesRegex(RuntimeError, 'closed'):
             self.camera.capture().result(timeout=2)
+
+    def test_full_profile_replays_unknown_writes_only_on_initialization(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'Brightness': 16, 'ExposureValue': 800,
+                  'camera_profile': 'windows_800_full'}
+        with patch.object(module.time, 'sleep'), patch.object(self.camera, '_assess', return_value={'reasons': []}):
+            self.camera.apply_initial(config).result(timeout=2)
+            self.camera.prepare_inference(config).result(timeout=2)
+        commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+        self.assertEqual(commands.count('05000000004600'), 1)
+        self.assertEqual(commands.count('f2010000000000'), 1)
+        self.assertEqual(commands.count('05320001357810'), 2)
+        with self.assertRaises(ValueError):
+            self.camera.apply_initial(dict(config, Brightness=20))
+
+    def test_windows_profile_sequence_no_time_overwrite_and_ae_only_on_reset(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
+                  'Brightness': 16, 'ExposureValue': 800, 'ExposureTime': '1/8s',
+                  'camera_profile': 'windows_800'}
+        with patch.object(module.time, 'sleep'), patch.object(self.camera, '_assess', return_value={'reasons': []}):
+            self.camera.apply_initial(config).result(timeout=2)
+            self.camera.prepare_inference(config).result(timeout=2)
+            commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+            self.assertEqual(commands.count('05000003357810'), 1)
+            self.assertEqual(commands.count('05320001357810'), 2)
+            self.assertNotIn('051f0001357810', commands)
+            seq = ['0502000c357810', '0525000d357810', '05000000357810',
+                   '05320001357810', '05000002357810']
+            indices = [commands.index(command) for command in seq]
+            self.assertEqual(indices, sorted(indices))
+            self.camera.reconnect().result(timeout=2)
+            commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+            self.assertEqual(commands.count('05000003357810'), 2)
+        self.assertEqual(self.camera._fixed_config['ExposureTime'], 'DNX64:800')
+        with self.assertRaises(ValueError):
+            self.camera.apply_initial(dict(config, ExposureValue=400))
 
     def test_manual_white_balance_order_and_reconnect(self):
         config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,

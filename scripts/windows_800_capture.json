@@ -1,0 +1,548 @@
+[
+  {
+    "frame": 455,
+    "delay_s": 0,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "01060000000000"
+  },
+  {
+    "frame": 465,
+    "delay_s": 0.021287,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 477,
+    "delay_s": 0.022611,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 487,
+    "delay_s": 0.022595,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 497,
+    "delay_s": 0.022376,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 521,
+    "delay_s": 0.12272,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 531,
+    "delay_s": 0.021984,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 543,
+    "delay_s": 0.022441,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 553,
+    "delay_s": 0.022225,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 565,
+    "delay_s": 0.022894,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 579,
+    "delay_s": 0.051458,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "01060000000000"
+  },
+  {
+    "frame": 589,
+    "delay_s": 0.02056,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "01060000000000"
+  },
+  {
+    "frame": 595,
+    "delay_s": 0.010028,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "03050000000000"
+  },
+  {
+    "frame": 613,
+    "delay_s": 0.118545,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 625,
+    "delay_s": 0.022622,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 635,
+    "delay_s": 0.02319,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 647,
+    "delay_s": 0.022873,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 669,
+    "delay_s": 0.124551,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 681,
+    "delay_s": 0.023641,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 695,
+    "delay_s": 0.047414,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 705,
+    "delay_s": 0.025826,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 717,
+    "delay_s": 0.022959,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 727,
+    "delay_s": 0.022894,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 739,
+    "delay_s": 0.023926,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "01060000000000"
+  },
+  {
+    "frame": 749,
+    "delay_s": 0.020657,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "01060000000000"
+  },
+  {
+    "frame": 755,
+    "delay_s": 0.010088,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "03050000000000"
+  },
+  {
+    "frame": 767,
+    "delay_s": 0.064358,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 781,
+    "delay_s": 0.022784,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000084006200"
+  },
+  {
+    "frame": 791,
+    "delay_s": 0.022587,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 803,
+    "delay_s": 0.023312,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000084006200"
+  },
+  {
+    "frame": 813,
+    "delay_s": 0.022992,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 825,
+    "delay_s": 0.022421,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000084006200"
+  },
+  {
+    "frame": 835,
+    "delay_s": 0.022469,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 847,
+    "delay_s": 0.022417,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000084006200"
+  },
+  {
+    "frame": 857,
+    "delay_s": 0.023676,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 869,
+    "delay_s": 0.023245,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000084006200"
+  },
+  {
+    "frame": 879,
+    "delay_s": 0.022615,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 889,
+    "delay_s": 0.022435,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000084006200"
+  },
+  {
+    "frame": 901,
+    "delay_s": 0.021633,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "f2010000000000"
+  },
+  {
+    "frame": 913,
+    "delay_s": 0.061487,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "f3010000000000"
+  },
+  {
+    "frame": 925,
+    "delay_s": 0.06395,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05100004006200"
+  },
+  {
+    "frame": 943,
+    "delay_s": 0.116638,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 953,
+    "delay_s": 0.023102,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 965,
+    "delay_s": 0.022629,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000003357810"
+  },
+  {
+    "frame": 977,
+    "delay_s": 0.032048,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05000003357810"
+  },
+  {
+    "frame": 1015,
+    "delay_s": 0.273507,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 1025,
+    "delay_s": 0.022694,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 1037,
+    "delay_s": 0.021681,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000003357810"
+  },
+  {
+    "frame": 1049,
+    "delay_s": 0.033383,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05070003357810"
+  },
+  {
+    "frame": 1057,
+    "delay_s": 0.034558,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "0502000c357810"
+  },
+  {
+    "frame": 1065,
+    "delay_s": 0.038063,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "0525000d357810"
+  },
+  {
+    "frame": 1077,
+    "delay_s": 0.0356,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05000000357810"
+  },
+  {
+    "frame": 1087,
+    "delay_s": 0.034922,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05320001357810"
+  },
+  {
+    "frame": 1095,
+    "delay_s": 0.035108,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05000002357810"
+  },
+  {
+    "frame": 1135,
+    "delay_s": 0.284298,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "0510001e3a7810"
+  },
+  {
+    "frame": 1143,
+    "delay_s": 0.035013,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "0530001b3a7810"
+  },
+  {
+    "frame": 1151,
+    "delay_s": 0.034567,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "051200103a7810"
+  },
+  {
+    "frame": 1159,
+    "delay_s": 0.034817,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "051e000f3a7810"
+  },
+  {
+    "frame": 1167,
+    "delay_s": 0.023799,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 1177,
+    "delay_s": 0.023389,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 1187,
+    "delay_s": 0.022713,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000080006200"
+  },
+  {
+    "frame": 1199,
+    "delay_s": 0.022672,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000084006200"
+  },
+  {
+    "frame": 1223,
+    "delay_s": 0.124955,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05070003006200"
+  },
+  {
+    "frame": 1241,
+    "delay_s": 0.114507,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05010003006200"
+  },
+  {
+    "frame": 1253,
+    "delay_s": 0.063221,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05100004006200"
+  },
+  {
+    "frame": 1265,
+    "delay_s": 0.064194,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000083006200"
+  },
+  {
+    "frame": 1275,
+    "delay_s": 0.023474,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e00000ca006200"
+  },
+  {
+    "frame": 1287,
+    "delay_s": 0.022049,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e00000c2006200"
+  },
+  {
+    "frame": 1297,
+    "delay_s": 0.022153,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e00000c0006200"
+  },
+  {
+    "frame": 1311,
+    "delay_s": 0.022404,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "e0000000006200"
+  },
+  {
+    "frame": 1323,
+    "delay_s": 0.022949,
+    "kind": "xu",
+    "selector": 2,
+    "payload": "05000000004600"
+  },
+  {
+    "frame": 1327,
+    "delay_s": 0.023306,
+    "kind": "pu",
+    "control": "brightness",
+    "value": 16
+  },
+  {
+    "frame": 1333,
+    "delay_s": 0.030788,
+    "kind": "pu",
+    "control": "contrast",
+    "value": 16
+  },
+  {
+    "frame": 1339,
+    "delay_s": 0.02719,
+    "kind": "pu",
+    "control": "hue",
+    "value": 0
+  },
+  {
+    "frame": 1345,
+    "delay_s": 0.028568,
+    "kind": "pu",
+    "control": "saturation",
+    "value": 32
+  },
+  {
+    "frame": 1349,
+    "delay_s": 0.021226,
+    "kind": "pu",
+    "control": "sharpness",
+    "value": 0
+  },
+  {
+    "frame": 1353,
+    "delay_s": 0.022602,
+    "kind": "pu",
+    "control": "gamma",
+    "value": 5
+  },
+  {
+    "frame": 1365,
+    "delay_s": 0.056025,
+    "kind": "pu",
+    "control": "white_balance_temperature",
+    "value": 5800
+  }
+]

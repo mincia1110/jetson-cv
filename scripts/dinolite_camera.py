@@ -3,6 +3,9 @@ from concurrent.futures import Future
 import queue
 import subprocess
 import threading
+import time
+import json
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -24,6 +27,7 @@ class DinoLiteCamera:
         self._error = None
         self._cap = None
         self._closed = False
+        self._windows_initialized = False
         self._auto_exposure = None  # Preserve startup state until explicitly selected.
         self._fixed_config = validate_conditions(initial_config) if initial_config is not None else None
         self.ready = Future()
@@ -75,6 +79,7 @@ class DinoLiteCamera:
             self._cap = None
 
     def _open(self):
+        self._windows_initialized = False
         self._publish()
         self._release()
         self._cap = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
@@ -155,13 +160,54 @@ class DinoLiteCamera:
         """Future -> {frame, report}. frame is None on failed image checks."""
         return self._submit('prepare', validate_conditions(config))
 
+    def _replay_windows_capture(self):
+        path = Path(__file__).with_name('windows_800_capture.json')
+        sequence = json.loads(path.read_text(encoding='utf-8'))
+        # Set the AWB state observed by GET_CUR in the Windows capture.
+        self._command(['v4l2-ctl', '-d', self.device, '--set-ctrl=white_balance_automatic=0'])
+        for item in sequence:
+            time.sleep(item['delay_s'])
+            if item['kind'] == 'xu':
+                self._command(['uvcdynctrl', '-d', self.device, '-S',
+                               f"4:{item['selector']}", item['payload']])
+            else:
+                self._command(['v4l2-ctl', '-d', self.device,
+                               f"--set-ctrl={item['control']}={item['value']}"])
+        self._auto_exposure = False
+
     def _apply_fixed(self, config):
         if self._cap is None:
             raise RuntimeError('Camera unavailable; reconnect first')
         self._led(False)
-        self._ae(False)
-        self._command(['uvcdynctrl', '-d', self.device, '-S', '4:2',
-                       EXPOSURE_COMMANDS[config['ExposureTime']]])
+        full_replay = config.get('camera_profile') == 'windows_800_full' and not self._windows_initialized
+        if full_replay:
+            self._replay_windows_capture()
+        elif config.get('camera_profile') in ('windows_800', 'windows_800_full'):
+            initializing = not self._windows_initialized
+            if initializing:
+                self._ae(True)
+                time.sleep(0.5)  # Supplied Windows COMMAND_TIME, not capture timing.
+            self._ae(False)
+            for payload in ('0502000c357810', '0525000d357810', '05000000357810',
+                            '05320001357810', '05000002357810'):
+                self._command(['uvcdynctrl', '-d', self.device, '-S', '4:2', payload])
+                time.sleep(0.04)  # Captured write spacing approximately 35–38 ms.
+            time.sleep(0.5)
+            if initializing:
+                # AE target writes observed after exposure in the supplied capture.
+                for payload in ('0510001e3a7810', '0530001b3a7810',
+                                '051200103a7810', '051e000f3a7810'):
+                    self._command(['uvcdynctrl', '-d', self.device, '-S', '4:2', payload])
+                    time.sleep(0.04)
+                # Known FLC level1 and all quadrants OFF; keep LED master OFF.
+                for payload in ('f3010000000000', '05010003006200', '05100004006200'):
+                    self._command(['uvcdynctrl', '-d', self.device, '-S', '4:2', payload])
+                    time.sleep(0.04)
+        else:
+            self._windows_initialized = False
+            self._ae(False)
+            self._command(['uvcdynctrl', '-d', self.device, '-S', '4:2',
+                           EXPOSURE_COMMANDS[config['ExposureTime']]])
         self._command(['v4l2-ctl', '-d', self.device,
                        f"--set-ctrl=brightness={config['Brightness']}"])
         actual = self._brightness()
@@ -172,6 +218,7 @@ class DinoLiteCamera:
         self.controls['brightness'] = config['Brightness']
         for _ in range(config['settle_frames']):
             self._publish(self._read())
+        self._windows_initialized = config.get('camera_profile') in ('windows_800', 'windows_800_full')
         return {'Brightness': actual, 'ExposureTime_requested': config['ExposureTime'],
                 'exposure_readback': 'unavailable', 'mode': 'fixed'}
 
@@ -185,7 +232,9 @@ class DinoLiteCamera:
     def _apply_video_controls(self, config):
         controls = config.get('video_controls', {})
         # Separate commands ensure AWB is disabled before manual temperature.
-        names = sorted(controls, key=lambda name: name != 'white_balance_automatic')
+        order = ('contrast', 'hue', 'saturation', 'sharpness', 'gamma',
+                 'white_balance_automatic', 'white_balance_temperature', 'power_line_frequency')
+        names = [name for name in order if name in controls]
         for name in names:
             self._command(['v4l2-ctl', '-d', self.device,
                            f'--set-ctrl={name}={controls[name]}'])
@@ -214,7 +263,7 @@ class DinoLiteCamera:
         return report
 
     def _check_conditions(self, config, include_frame=False):
-        report = {'before': None, 'reset_performed': False, 'after': None,
+        report = {'camera_profile': config.get('camera_profile', 'fixed'), 'before': None, 'reset_performed': False, 'after': None,
                   'brightness_before_apply': None, 'fixed_settings_applied': False,
                   'ExposureTime_requested': config['ExposureTime'],
                   'exposure_mode': 'fixed', 'exposure_verified': False,
