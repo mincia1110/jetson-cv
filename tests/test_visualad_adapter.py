@@ -31,7 +31,7 @@ class VisualADTests(unittest.TestCase):
             v=torch.cosine_similarity(t,a.unsqueeze(1),dim=2)-torch.cosine_similarity(t,n.unsqueeze(1),dim=2)
             maps.append(F.interpolate(torch.nan_to_num(v,nan=0.).reshape(1,1,24,24),size=(336,336),mode='bilinear',align_corners=False).squeeze(1))
         raw=torch.stack(maps).sum(0)[0]
-        score=torch.topk(raw.reshape(-1),1129).values.mean().item()
+        score=torch.topk(raw.reshape(-1),565).values.mean().item()  # ceil(336*336*0.005)
         result=postprocess(outputs,score,{})
         np.testing.assert_array_equal(result['anomaly_map'],gaussian_filter(raw.numpy(),sigma=4))
         self.assertEqual(result['pred_score'],score)

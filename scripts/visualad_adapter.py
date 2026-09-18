@@ -11,6 +11,7 @@ from scipy.ndimage import gaussian_filter
 from measurement_pipeline import visible_preprocess
 
 LAYERS = (6, 12, 18, 24)
+DEFAULT_TOPK_RATIO = 0.005  # User's deployed Windows GUI; confirmed on the same BMP.
 MEAN = (0.48145466, 0.4578275, 0.40821073)
 STD = (0.26862954, 0.26130258, 0.27577711)
 
@@ -50,8 +51,7 @@ def postprocess(outputs, threshold, config):
             maps.append(F.interpolate(values.reshape(1, 1, 24, 24), size=(336, 336),
                                       mode='bilinear', align_corners=False).squeeze(1))
         raw = torch.stack(maps).sum(dim=0)[0]
-        # Official utils/scoring.py: DEFAULT_TOPK_RATIO=0.01, ceil, not floor.
-        k = max(1, math.ceil(raw.numel() * 0.01))
+        k = max(1, math.ceil(raw.numel() * DEFAULT_TOPK_RATIO))
         score = float(torch.topk(raw.reshape(-1), k).values.mean().item())
         filtered = gaussian_filter(raw.numpy(), sigma=4)
     return {'anomaly_map': filtered, 'raw_anomaly_map': raw.numpy(), 'pred_score': score,

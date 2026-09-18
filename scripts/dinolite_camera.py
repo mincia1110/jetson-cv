@@ -94,10 +94,15 @@ class DinoLiteCamera:
         self._led(False)
         if self._auto_exposure is not None and self._fixed_config is None:
             self._ae(self._auto_exposure)
-        if self.controls:
+        controls = dict(self.controls)
+        if self._fixed_config is not None:
+            # Apply these once, in the profile's post-exposure order below.
+            for name in ('brightness', *self._fixed_config.get('video_controls', {})):
+                controls.pop(name, None)
+        if controls:
             # Use Linux control names and validated Linux values, never DLL enum IDs.
             self._command(['v4l2-ctl', '-d', self.device, '--set-ctrl',
-                           ','.join(f'{key}={int(value)}' for key, value in self.controls.items())])
+                           ','.join(f'{key}={int(value)}' for key, value in controls.items())])
         if self._fixed_config is not None:
             self._apply_fixed(self._fixed_config)
         frame = None
@@ -126,6 +131,14 @@ class DinoLiteCamera:
         # Preserve test.py's behavior: average ROI, keep first frame outside ROI.
         first[y0:y1, x0:x1] = (total / count).astype(np.uint8)
         return first
+
+    def _reconnect(self):
+        # Windows reset_camera releases the stream and waits one second before
+        # reopening. Keep this on the camera worker, including the closed period.
+        self._publish()
+        self._release()
+        time.sleep(1.0)
+        return self._open()
 
     def _submit(self, action, *args):
         future = Future()
@@ -156,9 +169,13 @@ class DinoLiteCamera:
     def apply_initial(self, config):
         return self._submit('initial', validate_conditions(config))
 
-    def prepare_inference(self, config):
-        """Future -> {frame, report}. frame is None on failed image checks."""
-        return self._submit('prepare', validate_conditions(config))
+    def prepare_inference(self, config, *, manual_retry=False, on_recovery=None):
+        """Future -> {frame, report}; failed attempts never supply a frame.
+
+        MOSA uses manual_retry: after recovery the operator must measure again.
+        on_recovery runs on the worker; it must not call Tk APIs.
+        """
+        return self._submit('prepare', validate_conditions(config), manual_retry, on_recovery)
 
     def _replay_windows_capture(self):
         path = Path(__file__).with_name('windows_800_capture.json')
@@ -262,18 +279,34 @@ class DinoLiteCamera:
             report['reasons'].append('AE ON: exposure is not frozen')
         return report
 
-    def _check_conditions(self, config, include_frame=False):
+    def _preserve_windows_settings(self, config, manual_retry):
+        # Rewriting exposure/WB on the next click can change the post-reset
+        # state. In MOSA's Windows mode only write when requested values change.
+        if not manual_retry or not self._windows_initialized or self._fixed_config is None:
+            return False
+        if config['camera_profile'] not in ('windows_800', 'windows_800_full'):
+            return False
+        keys = ('camera_profile', 'ExposureTime', 'Brightness', 'video_controls')
+        return all(config.get(key) == self._fixed_config.get(key) for key in keys)
+
+    def _check_conditions(self, config, manual_retry=False, on_recovery=None, include_frame=False):
         report = {'camera_profile': config.get('camera_profile', 'fixed'), 'before': None, 'reset_performed': False, 'after': None,
                   'brightness_before_apply': None, 'fixed_settings_applied': False,
                   'ExposureTime_requested': config['ExposureTime'],
                   'exposure_mode': 'fixed', 'exposure_verified': False,
-                  'recovery_enabled': config['reset_flag_en']}
+                  'recovery_enabled': config['reset_flag_en'],
+                  'settings_action': 'not_applied', 'reset_succeeded': False,
+                  'manual_retry_required': False}
         frame = None
         try:
             report['brightness_before_apply'] = self._brightness()
-            # Exposure cannot be read back: apply fixed settings every measurement.
-            self._apply_fixed(config)
-            report['fixed_settings_applied'] = True
+            if self._preserve_windows_settings(config, manual_retry):
+                report['settings_action'] = 'preserved'
+            else:
+                # Legacy fixed-time mode still reapplies on every measurement.
+                self._apply_fixed(config)
+                report['fixed_settings_applied'] = True
+                report['settings_action'] = 'reapplied'
             frame = self._capture(config['capture_no'], (900, 1100, 0, 2590))
             before = self._assess(config, frame)
         except Exception as exc:
@@ -282,20 +315,26 @@ class DinoLiteCamera:
         if before['reasons'] and config['reset_flag_en']:
             report['reset_performed'] = True
             try:
+                if on_recovery is not None:
+                    on_recovery()
                 # Save the requested values even if their first application failed.
                 self._fixed_config = dict(config)
                 self.controls['brightness'] = config['Brightness']
-                self._open()  # Reconnect, reapply fixed settings, drain old frames.
+                self._reconnect()  # Close, wait, fully initialize, drain old frames.
                 report['fixed_settings_applied'] = True
                 frame = self._capture(config['capture_no'], (900, 1100, 0, 2590))
                 report['after'] = self._assess(config, frame)
+                report['reset_succeeded'] = True
+                report['manual_retry_required'] = manual_retry
             except Exception as exc:
                 self._release()
                 self._publish(error=str(exc))
                 report['after'] = {'reasons': [f'{type(exc).__name__}: {exc}']}
         final = report['after'] or before
-        report['status'] = 'FAIL' if final['reasons'] else 'IMAGE_AND_BRIGHTNESS_OK'
-        report['allow_inference'] = not final['reasons']
+        report['image_conditions_ok'] = not final['reasons']
+        report['status'] = ('RESET_DONE_RETRY_REQUIRED' if report['manual_retry_required']
+                            else 'FAIL' if final['reasons'] else 'IMAGE_AND_BRIGHTNESS_OK')
+        report['allow_inference'] = not final['reasons'] and not report['manual_retry_required']
         if include_frame:
             return {'frame': frame if report['allow_inference'] else None, 'report': report}
         return report
@@ -332,7 +371,7 @@ class DinoLiteCamera:
                     continue
                 try:
                     if action == 'reconnect':
-                        result = self._open()
+                        result = self._reconnect()
                     elif action == 'capture':
                         result = self._capture(*args)
                     elif action == 'check':

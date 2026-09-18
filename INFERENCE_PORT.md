@@ -25,7 +25,7 @@ python scripts/compare_visualad.py \
   --output artifacts/visualad-postprocess-01
 ```
 
-합산 raw map의 상위 1%(ceil, 1129개) 평균이 score다. sigma=4 Gaussian은 그 이후 맵·마스크에만 적용한다. wrapper label/mask는 strict >, GUI의 NG는 >=를 유지한다. 출력은 맵·점수 오차, 양쪽 판정, 마스크 불일치 픽셀 수다. 0 입력 결과는 실행·수치 비교용이며 업무 판정 검증은 사내 실제 영상으로 한다.
+합산 raw map의 상위 0.5%(비율 0.005, ceil, 565개) 평균이 score다. 배포된 Windows GUI의 원래 값에 맞췄으며, 사용자가 같은 BMP 결과 일치를 확인했다. sigma=4 Gaussian은 그 이후 맵·마스크에만 적용한다. wrapper label/mask는 strict >, GUI의 NG는 >=를 유지한다. 출력은 맵·점수 오차, 양쪽 판정, 마스크 불일치 픽셀 수다. 0 입력 결과는 실행·수치 비교용이며 업무 판정 검증은 사내 실제 영상으로 한다.
 
 출처: [공식 scoring](https://github.com/7HHHHH/VisualAD/blob/main/utils/scoring.py), [공식 transforms](https://github.com/7HHHHH/VisualAD/blob/main/utils/transforms.py). 사용자 제공 wrapper의 계산 순서를 기준으로 구현했으며 아래의 과거 템플릿 연결 설명보다 이 절차를 우선한다.
 

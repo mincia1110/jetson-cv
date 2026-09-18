@@ -162,6 +162,85 @@ class CameraTests(unittest.TestCase):
         self.assertEqual(commands.count(temp), 2)
         self.assertEqual(self.camera.video_values['gamma'], 5)
 
+    def test_windows_manual_retry_preserves_post_reset_state(self):
+        for profile in ('windows_800', 'windows_800_full'):
+            with self.subTest(profile=profile), patch.object(module.time, 'sleep') as sleep:
+                config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 10,
+                          'reset_flag_en': True, 'Brightness': 16,
+                          'camera_profile': profile}
+                # Startup is separate from the failed measurement being tested.
+                self.camera._windows_initialized = False
+                self.camera.apply_initial(config).result(timeout=2)
+                self.camera.calls.clear()
+                bad = {'RG_diff': 18, 'reasons': ['RG_gab error']}
+                with patch.object(self.camera, '_assess', side_effect=[bad, bad]):
+                    result = self.camera.prepare_inference(
+                        config, manual_retry=True,
+                        on_recovery=lambda: self.camera.record('recovery_started')).result(timeout=2)
+                report = result['report']
+                self.assertIsNone(result['frame'])
+                self.assertTrue(report['reset_succeeded'])
+                self.assertTrue(report['manual_retry_required'])
+                self.assertFalse(report['allow_inference'])
+                self.assertFalse(report['image_conditions_ok'])
+                self.assertEqual(report['settings_action'], 'preserved')
+                self.assertEqual(report['after']['RG_diff'], 18)
+                calls = [kind for kind, _ in self.camera.calls]
+                self.assertLess(calls.index('recovery_started'), calls.index('release'))
+                self.assertLess(calls.index('release'), calls.index('open'))
+                self.assertEqual(calls.count('open'), 1)
+                sleep.assert_any_call(1.0)
+                commands = [kind[-1] for kind in calls if isinstance(kind, tuple)]
+                self.assertEqual(commands.count('05320001357810'), 1)
+                if profile == 'windows_800_full':
+                    self.assertIn('05000000004600', commands)
+                else:
+                    self.assertEqual(commands.count('05000003357810'), 1)
+
+                # The next operator click checks a new frame without undoing
+                # reset state. Changing only a threshold must not rewrite WB.
+                self.camera.calls.clear()
+                with patch.object(self.camera, '_assess', return_value={'RG_diff': 5, 'reasons': []}):
+                    retry = self.camera.prepare_inference(
+                        dict(config, RG_gab=12), manual_retry=True).result(timeout=2)
+                self.assertIsNotNone(retry['frame'])
+                self.assertTrue(retry['report']['allow_inference'])
+                self.assertFalse(retry['report']['reset_performed'])
+                commands = [kind for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+                self.assertFalse(any('-S' in cmd or '--set-ctrl' in ' '.join(cmd) for cmd in commands))
+
+    def test_manual_recovery_pass_still_requires_a_new_click(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 10,
+                  'reset_flag_en': True, 'Brightness': 16, 'ExposureTime': '1/60s'}
+        with patch.object(module.time, 'sleep'), patch.object(self.camera, '_assess', side_effect=[
+                {'reasons': ['RG_gab error']}, {'reasons': []}]):
+            result = self.camera.prepare_inference(config, manual_retry=True).result(timeout=2)
+        self.assertTrue(result['report']['image_conditions_ok'])
+        self.assertEqual(result['report']['status'], 'RESET_DONE_RETRY_REQUIRED')
+        self.assertFalse(result['report']['allow_inference'])
+        self.assertIsNone(result['frame'])
+
+    def test_windows_changed_brightness_is_applied_on_next_click(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 10,
+                  'Brightness': 16, 'camera_profile': 'windows_800'}
+        with patch.object(module.time, 'sleep'), patch.object(self.camera, '_assess', return_value={'reasons': []}):
+            self.camera.apply_initial(config).result(timeout=2)
+            result = self.camera.prepare_inference(dict(config, Brightness=20), manual_retry=True).result(timeout=2)
+        self.assertEqual(self.camera.brightness, 20)
+        self.assertEqual(result['report']['settings_action'], 'reapplied')
+
+    def test_manual_reconnect_error_does_not_claim_ready(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 10,
+                  'reset_flag_en': True, 'Brightness': 16, 'ExposureTime': '1/60s'}
+        with patch.object(self.camera, '_assess', return_value={'reasons': ['RG_gab error']}), patch.object(
+                self.camera, '_reconnect', side_effect=RuntimeError('device missing')):
+            result = self.camera.prepare_inference(config, manual_retry=True).result(timeout=2)
+        self.assertFalse(result['report']['reset_succeeded'])
+        self.assertFalse(result['report']['manual_retry_required'])
+        self.assertFalse(result['report']['allow_inference'])
+        self.assertEqual(result['report']['status'], 'FAIL')
+        self.assertIsNone(result['frame'])
+
     def test_video_controls_reject_invalid_and_inactive_settings(self):
         base = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
                 'Brightness': 16, 'ExposureTime': '1/60s'}

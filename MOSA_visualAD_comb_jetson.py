@@ -600,6 +600,9 @@ class CameraGUI:
         self.current_frame = None
         self.frame_lock = threading.Lock()
         self.running = True
+        self._measurement_busy = False
+        self._camera_future = None
+        self._camera_recovery_started = threading.Event()
 
         # -----------------------------
         # Inference with gathered data
@@ -736,11 +739,12 @@ class CameraGUI:
         )
         self.folder_label.pack(anchor="w")
 
-        ttk.Button(
+        self.folder_button = ttk.Button(
             folder_frame,
             text="저장 폴더 선택",
             command=self.select_save_folder
-        ).pack(fill="x", pady=3)
+        )
+        self.folder_button.pack(fill="x", pady=3)
 
         # =============================
         # 파일명
@@ -782,6 +786,7 @@ class CameraGUI:
             style="Big.TButton"
         )
         measure_button.pack(fill="x", pady=(20, 10), ipady=20)
+        self.measure_button = measure_button
 
         # =====================
         # ▶ OK / NG 상태 박스
@@ -869,7 +874,7 @@ class CameraGUI:
             self.RG_gab = settings['RG_gab']
             self.reset_flag_en = settings['reset_flag_en']
             self.capture_no = settings['capture_no']
-            return False  # Fixed settings are applied and checked at each capture.
+            return False  # The worker checks the requested settings at each capture.
 
 
         except Exception as exc:
@@ -877,9 +882,46 @@ class CameraGUI:
             sys.exit(1)
 
     def reset_camera(self):
-        self.camera.reconnect().result()
+        if self._camera_future is not None:
+            return
+        self._set_measurement_busy(True)
+        self._show_reset_wait()
+        self._camera_future = self.camera.reconnect()
+        self.root.after(50, self._poll_reset)
+
+    def _poll_reset(self):
+        if not self.running:
+            return
+        if not self._camera_future.done():
+            self.root.after(50, self._poll_reset)
+            return
+        try:
+            self._camera_future.result()
+            self._show_reset_ready()
+        except Exception as exc:
+            self._show_camera_failure(str(exc))
+        finally:
+            self._camera_future = None
+            self._set_measurement_busy(False)
+
+    def _show_reset_wait(self):
+        self.result_container.config(bg='blue')
+        self.result_label.config(text='FAIL\n(WAIT)', bg='blue', font=('Arial', 35, 'bold'))
+
+    def _show_reset_ready(self):
         self.result_container.config(bg="gray")
         self.result_label.config(text="READY", bg="gray", font=("Arial", 35, "bold"))
+        self.last_save_label.config(text='카메라 재초기화 완료. 측정 버튼을 다시 누르세요.\nREADY는 영상 조건 통과를 뜻하지 않습니다.')
+
+    def _show_camera_failure(self, detail):
+        self.result_container.config(bg='blue')
+        self.result_label.config(text='FAIL', bg='blue', font=('Arial', 35, 'bold'))
+        self.last_save_label.config(text=detail)
+
+    def _set_measurement_busy(self, busy):
+        self._measurement_busy = busy
+        for widget in (self.measure_button, self.name_entry, self.threshold_entry, self.folder_button):
+            widget.config(state='disabled' if busy else 'normal')
 
     def camera_capture_loop(self):
         while self.running:
@@ -965,12 +1007,57 @@ class CameraGUI:
     # 이미지 저장 (원본)
     # -----------------------------
     def capture_image(self):
+        if self._measurement_busy or not self.running:
+            return
+        self._set_measurement_busy(True)
         try:
             self._capture_image_impl()
         except Exception as exc:
-            self.result_container.config(bg='blue')
-            self.result_label.config(text='FAIL', bg='blue')
+            self._show_camera_failure(str(exc))
             messagebox.showerror('Measurement failed', str(exc))
+        finally:
+            if self._camera_future is None:
+                self._set_measurement_busy(False)
+
+    def _poll_camera(self, name, filepath, first_time):
+        # All Tk calls and inference stay on the GUI thread. Camera reset and
+        # its waits stay on the worker so FAIL(WAIT) and preview can update.
+        if not self.running:
+            return
+        if self._camera_recovery_started.is_set():
+            self._show_reset_wait()
+        if not self._camera_future.done():
+            self.root.after(50, self._poll_camera, name, filepath, first_time)
+            return
+        try:
+            future = self._camera_future
+            self._camera_future = None
+            captured = future.result()
+            self.camera_report = captured['report']
+            print('[Camera check]', json.dumps(self.camera_report, ensure_ascii=False), flush=True)
+            self.reset_flag = self.camera_report['reset_performed']
+            if captured['frame'] is None:
+                if self.camera_report.get('manual_retry_required'):
+                    self._show_reset_ready()
+                    after = self.camera_report.get('after') or {}
+                    if after.get('reasons'):
+                        self.last_save_label.config(text='재초기화 완료, 영상 조건은 아직 미달입니다.\n'
+                                                    '조명·시료 확인 후 수동 재측정하세요.\n'
+                                                    + '\n'.join(after['reasons']))
+                else:
+                    final = self.camera_report.get('after') or self.camera_report['before']
+                    recovery = ('카메라 재초기화 실패' if self.camera_report['reset_performed']
+                                else '조건 미달 / 자동복구 꺼짐: reset_flag_en 확인')
+                    self._show_camera_failure(recovery + '\n' + '\n'.join(final['reasons']))
+                return  # No inference or image/result save on the failed attempt.
+            self._process_measurement(name, filepath, first_time, captured['frame'])
+        except Exception as exc:
+            self._show_camera_failure(str(exc))
+            messagebox.showerror('Measurement failed', str(exc))
+        finally:
+            # _process_measurement may have started an explicit reset.
+            if self._camera_future is None:
+                self._set_measurement_busy(False)
 
     def _capture_image_impl(self):
         # 측정 시작 시 "Wait" 표시
@@ -1078,19 +1165,16 @@ class CameraGUI:
         self.reset_flag = False
         self.camera_report = {'mode': 'file', 'exposure_readback': 'unavailable'}
         if self.Camera_or_BMP_flag == 1:
-            captured = self.camera.prepare_inference(self.camera_settings).result()
-            self.camera_report = captured['report']
-            print('[Camera check]', json.dumps(self.camera_report, ensure_ascii=False), flush=True)
-            if captured['frame'] is None:
-                self.result_container.config(bg='blue')
-                self.result_label.config(text='FAIL', bg='blue')
-                final = self.camera_report.get('after') or self.camera_report['before']
-                recovery = ('초기값 재입력·재검사 실패' if self.camera_report['reset_performed']
-                            else '자동복구 꺼짐: data.json의 reset_flag_en 확인')
-                self.last_save_label.config(text=recovery + '\n' + '\n'.join(final['reasons']))
-                return
-            frame_to_save = captured['frame']
+            self._camera_recovery_started.clear()
+            self._camera_future = self.camera.prepare_inference(
+                self.camera_settings, manual_retry=True,
+                on_recovery=self._camera_recovery_started.set)
+            self.root.after(50, self._poll_camera, name, filepath, first_time)
+            return
+        self._process_measurement(name, filepath, first_time)
 
+    def _process_measurement(self, name, filepath, first_time, frame_to_save=None):
+        start = first_time
         if self.Camera_or_BMP_flag == 1:
             if not cv2.imwrite(filepath, frame_to_save):
                 raise RuntimeError(f'Image write failed: {filepath}')
@@ -1183,8 +1267,10 @@ class CameraGUI:
 
         # Keep the original image checks, but never infer after a failed check.
         if self.reset_flag:
-            self.result_container.config(bg='blue')
-            self.result_label.config(text='FAIL', bg='blue')
+            if self.Camera_or_BMP_flag == 1 and self.reset_flag_en:
+                self.reset_camera()
+            else:
+                self._show_camera_failure('영상 조건 미달: 밝기/RG 값을 확인하세요.')
             return
 
         # AI inference

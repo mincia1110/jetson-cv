@@ -200,16 +200,18 @@ MOSA 메인은 실행 작업 폴더의 **data.json만** 읽는다. MOSA_RUNTIME_
 }
 ```
 
-자동 WB가 켜져 있으면 색온도는 inactive다. 코드는 AWB OFF 후 색온도를 설정하고 지정값을 다시 읽어 확인한다. 초기 시작·다음 측정·복구에서 적용한다. 밝기는 최상위 Brightness 하나로 관리한다. 미노출 ColorEnable/BacklightCompensation/Gain 및 inactive focus는 설정하지 않는다. Windows의 요청값과 같아도 이미지 동등성은 별도 확인해야 한다.
+자동 WB가 켜져 있으면 색온도는 inactive다. 코드는 AWB OFF 후 색온도를 설정하고 지정값을 다시 읽어 확인한다. 초기 시작·설정 변경·복구에서 적용한다. fixed 모드에서는 매 측정에도 적용하지만, MOSA Windows 프로필에서는 같은 설정을 다시 쓰지 않는다. 밝기는 최상위 Brightness 하나로 관리한다. 미노출 ColorEnable/BacklightCompensation/Gain 및 inactive focus는 설정하지 않는다. Windows의 요청값과 같아도 이미지 동등성은 별도 확인해야 한다.
 
 ExposureTime은 다음 문자열 중 하나다: `1/1000s`, `1/500s`, `1/250s`, `1/125s`, `1/60s`, `1/30s`, `1/15s`, `1/8s`, `1/4s`, `1/2s`, `1s`, `2s`, `4s`, `8s`, `16s`. 중간값은 미지원이다. 이는 USB 명령표의 이름이며 모든 값의 실제 셔터 시간을 검증한 것은 아니다. DNX64 ExposureValue와의 변환식은 확인되지 않았다.
 
 ### 설정 반영·자동복구·로그
 
-- `reset_flag_en: 1` 또는 `true`: 실패 시 한 번 재연결 → 고정값 재적용 → 재검사. 0은 자동복구 OFF다. 계속 광량이 기준 밖이면 추론을 차단하며 GUI FAIL과 터미널 before/after를 확인한다.
+- `reset_flag_en: 1` 또는 `true`: MOSA에서 실패 시 FAIL(WAIT) → 닫기 → 1초 대기 → 재연결·초기값 적용 → READY → 수동 재측정. after는 진단용이며 해당 클릭에서 추론하지 않는다. READY는 영상 조건 통과가 아니다. 다음 클릭도 광량이 기준 밖이면 추론하지 않는다. 재초기화 자체 실패 시 FAIL 유지. 0은 자동복구 OFF다.
+- [Windows 800 모드](WINDOWS_800_CHECK.md)의 설정 보존과 before/after/수동 재측정 비교 절차를 따른다. 새 메인과 scripts를 함께 갱신한다. 독립 카메라 진단 GUI는 기존 자동 재검사 방식을 유지한다.
 - 카메라 설정·검사기준은 다음 측정 시 다시 읽는다. backend·모델·엔진 경로·device/fps는 앱 재시작 후 적용한다.
 - `Data_log_flag: 1`일 때 CSV_path의 log.csv에 실제 실행 backend를 기록한다. 기존 로그는 backend 열을 추가하고 이전 행을 unknown으로 보존한다. CSV_path는 미리 존재하는 쓰기 가능한 Linux 폴더여야 한다.
 - Windows와 비교할 때 먼저 동일 BMP로 점수를 비교하고, 이후 고정 조명·시료·거리에서 카메라 설정을 조정한다. 이미지는 사내에서만 비교해도 된다.
+- VisualAD 점수 비율은 배포된 Windows 값인 0.005(상위 0.5%)로 고정했다. 사용자가 같은 BMP 결과 일치를 확인했다. 과거 어댑터의 0.01 설정으로 되돌리지 않는다.
 
 ## 9. ONNX 단독 검사
 
@@ -303,6 +305,6 @@ doctor.json의 error 항목도 확인한다. doctor는 환경 조회이며 GPU �
 | libcudss.so.0 없음 | 5단계에서 설치 여부와 검색 경로를 각각 점검 |
 | tqdm/ftfy/regex/sklearn/tabulate/skimage/seaborn 없음 | 같은 venv의 `python -m pip install -r requirements-inference.txt` 실행 |
 | cv2/NumPy ABI 오류 | 시스템 OpenCV 사용, numpy<2 유지. pip OpenCV를 중복 설치하지 않음 |
-| 자동복구 안 됨 | reset_flag_en=0인지 확인. 1로 설정해도 실제 광량 이상이 지속되면 FAIL 유지 |
+| 자동복구 안 됨 | reset_flag_en 및 report.reset_succeeded 확인. READY는 재초기화 완료로, 수동 재측정 필요. 영상 조건 미달이 지속되면 다음 측정도 추론 차단 |
 
 모든 설치가 끝나면 `python -m pip check`와 10단계 import 검사를 다시 수행한다. 이 문서는 확인된 작업 흐름이며, 새 SD에서 전체 절차를 처음부터 재실행한 인수 결과는 아직 없다.
