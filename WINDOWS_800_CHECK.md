@@ -52,16 +52,80 @@ windows_800에서는 ExposureTime 항목이 남아 있어도 명령에 사용하
 
 노출은 여전히 readback 불가다. preserved는 소프트웨어가 불필요한 쓰기를 생략했다는 뜻이며, 카메라 내부 상태가 실제로 고정됐다는 보증은 아니다. 비교 중 외부 도구로 제어값을 변경하지 않는다.
 
-기존 모드 복귀: camera_profile을 fixed로 바꾸고 기존 ExposureTime과 video_controls/Brightness를 백업에서 복원한 뒤 재시작한다. 프로필 이름만 바꾸면 나머지 장치 설정까지 자동 원복되지는 않는다.
+기존 모드 복귀: windows_stream_restart를 false로, camera_profile을 fixed로 바꾸고 기존 ExposureTime과 video_controls/Brightness를 백업에서 복원한 뒤 재시작한다. 프로필 이름만 바꾸면 나머지 장치 설정까지 자동 원복되지는 않는다.
 
 노출 시퀀스: 0502000c357810 → 0525000d357810 → 05000000357810 → 05320001357810 → 05000002357810. GUI 실행 중 별도 uvcdynctrl 수동 명령을 병행하지 않는다. 설정 보존 모드에서는 외부의 노출 변경을 readback으로 감지하거나 매 측정에 덮어쓰지 못한다.
 
 ## 미확인 쓰기 포함 실험: windows_800_full
 
-camera_profile을 `windows_800_full`로 바꾸고 앱을 재시작한다. ExposureValue800, Brightness16, 위 Windows 기본 video_controls를 사용해야 한다. 캡처의 장치2:12에서 관측한 성공한 SET_CUR 쓰기 78개(XU unit4 및 PU unit3)를 원래 순서·반복대로 재생한다. 데이터는 scripts/windows_800_capture.json에 있다. 의미 미확인 쓰기 및 조회 준비용 e0 쓰기도 포함한다. LED ON 명령도 포함되므로 초기화 동안 LED가 일시적으로 켜질 수 있다.
+camera_profile을 `windows_800_full`로 바꾸고 앱을 재시작한다. ExposureValue800, Brightness16, 위 Windows 기본 video_controls를 사용해야 한다. 2026-09-18 성공 리셋 캡처의 장치2:24에서 관측한 성공한 SET_CUR 쓰기 78개(XU unit4 및 PU unit3)를 원래 순서·반복대로 재생한다. 데이터는 scripts/windows_800_capture.json에 있다. 의미 미확인 쓰기 및 조회 준비용 e0 쓰기도 포함한다. LED ON 명령도 포함되므로 초기화 동안 LED가 일시적으로 켜질 수 있다.
 
-USB 요청/응답을 통째로 복제하는 모드는 아니다. 장치 열기·포맷 협상·표준 USB 요청·GET 응답·영상은 제외한다. 따라서 e0 쓰기 뒤 원래 DLL이 수행한 GET까지 재현한 것은 아니다. 패킷 간 타임스탬프 차이를 sleep으로 사용하므로 실제 명령 실행시간이 더해져 Windows와 정확한 타이밍은 다르다. AWB는 캡처 조회 결과인 OFF를 재생 전에 명시적으로 설정한다. 재생 후 기존 고정 영상 속성을 재적용하고 readback·안정화한다.
+USB 요청/응답을 통째로 복제하는 모드는 아니다. 표준 USB 요청·GET 응답·영상은 제외한다. 아래 windows_stream_restart 옵션으로 영상 포맷 전환을 V4L2에서 근사할 수 있다. 따라서 e0 쓰기 뒤 원래 DLL이 수행한 GET까지 재현한 것은 아니다. 패킷 간 타임스탬프 차이를 sleep으로 사용하므로 실제 명령 실행시간이 더해져 Windows와 정확한 타이밍은 다르다. AWB는 캡처 조회 결과인 OFF를 재생 전에 명시적으로 설정한다. 재생 후 기존 고정 영상 속성을 재적용하고 readback·안정화한다.
 
 MOSA 일반 측정에서는 설정이 그대로면 제어 쓰기를 생략한다. 설정 변경 시에는 AE OFF 및 노출 다섯 쓰기와 영상 속성을 적용한다. 재연결 복구 때는 전체 78개를 재생한다. 실패 시 정상 프레임으로 간주하지 않고 위 수동 재측정 흐름을 따른다. 프로필 전환은 반드시 재시작한다.
 
 비교: windows_800에서 5회 RGB/score → windows_800_full로 재시작 후 동일 조건 5회 → 복구 후 5회. 자체 조명이 최종적으로 꺼졌는지 확인한다. 전체 옵션에서만 결과가 가까워지면 미확인 설정의 영향으로 범위를 좁힐 수 있지만 개별 명령 의미가 확정된 것은 아니다.
+
+
+## 2026-09-18 성공 리셋의 스트림 전환 시험
+
+Windows 로그는 리셋 직전 RGB=(181.9985,163.2368,142.0183), RG_diff=18에서,
+리셋 후 수동 재측정 RGB=(171.1054,165.9932,136.8743), RG_diff=5로 변했다.
+후자의 anomaly score는 5.224750이다. 같은 BMP에서 추론 동등성은 사용자가 이미 확인했다.
+
+PCAP에서 한 번의 reset 중 다음 순서가 확인됐다. 시간은 캡처 시작 상대 초다.
+
+| 프레임 | 시간 | 동작 |
+|---|---:|---|
+| 8140 | 39.1996 | 기존 스트림 STOP |
+| 8156/8158 | 40.6430/40.6434 | YUY2 640×480 30fps COMMIT/START |
+| 8196 | 40.9206 | STOP |
+| 8212/8214 | 41.6738/41.6742 | YUY2 640×480 30fps COMMIT/START |
+| 8252 | 41.9538 | STOP |
+| 8268/8270 | 42.7036/42.7040 | MJPEG 2592×1944 10fps COMMIT/START |
+| 8372–9418 | 43.3857–47.4759 | XU/PU SET_CUR 78개 |
+
+카메라 Configuration Descriptor의 format/frame index와 COMMIT interval을 함께 해석했다.
+최종 MJPEG는 format2/frame12, interval=1000000×100ns=0.1초다.
+중간 YUY2는 format1/frame1, interval=333333×100ns다.
+78개 쓰기의 데이터/순서는 기존 캡처와 동일하다. 이번 자료에서는 AE ON→OFF 간격이
+약 0.611초, 마지막 노출 쓰기→AE target 간격이 약 0.537초다.
+full 목록의 간격을 이번 자료로 갱신했다. 실행 도구의 오버헤드는 별도로 더해진다.
+
+LED master ON(f201)은 이 구간에 한 번만 있다. 세 번의 점멸은 세 번의 스트림 시작과
+연관됐을 가능성이 있지만, USB 캡처만으로 물리 LED 점멸의 원인을 확정할 수 없다.
+GUI 시작 로그는 있지만 PCAP에는 초기 GUI 시작 전체가 들어 있지 않다.
+
+기존 data.json에 다음 키를 병합하고 앱을 완전히 종료 후 다시 실행한다.
+
+```json
+"camera_profile": "windows_800_full",
+"windows_stream_restart": true,
+"ExposureValue": 800,
+"Brightness": 16,
+"reset_flag_en": 1
+```
+
+video_controls는 위의 Windows 기본값을 유지한다. 이 옵션은 windows_800에도 적용 가능하다.
+옵션 생략/false면 중간 스트림 없이 기존 방식으로 연다. true면 시동 및 재연결마다
+YUYV 640×480 30fps를 9프레임씩 두 차례 읽고 닫은 뒤 최종 MJPG를 연다.
+중간 종료 뒤 0.72초, 최종 스트림 시작 뒤 0.68초 대기한다.
+이는 OpenCV/V4L2를 통한 근사이며 Windows 드라이버의 내부 협상 및 종료 지연까지
+일치시키는 것은 아니다. USB SET_INTERFACE를 직접 보내지는 않는다.
+중간 해상도/포맷/fps 확인에 실패하면 조용히 대체하지 않고 실패를 보고한다.
+중간 프레임은 미리보기·측정에 전달하지 않는다. 최종 모드는 2592×1944 10fps여야 한다.
+
+1. 터미널에 `[camera reset] stream 1/3`, `2/3`, `3/3`이 나오는지 확인한다.
+2. 동일한 정상 외부 조명·시료 상태에서 최초 측정 RGB/RG_diff를 기록한다.
+3. RG_diff가 17–19인 상태에서 기존 검사 기준으로 리셋을 유발한다.
+   Windows의 성공 사례처럼 **정상 조명 상태에서 RG 기준 미달로 리셋**하는 비교가 우선이다.
+   리셋 중 손전등을 비추면 AE 수렴 조건까지 달라진다.
+4. FAIL(WAIT)→회색 READY 후 직접 재측정한다. before/after와 다음 클릭의
+   settings_action=preserved, RGB/RG_diff, score를 기록한다. 5회 반복한다.
+5. 같은 설정에서 windows_stream_restart=false로 재시작하여 비교한다.
+   full 명령 간격은 양쪽 동일하므로 중간 스트림의 영향을 분리할 수 있다.
+
+RG_diff≈5 복구는 아직 Jetson에서 확인되지 않았다. 차이가 남으면 다음 후보는
+Windows e0 조회의 GET 응답 왕복, 드라이버의 제어값 캐시, Linux에서 추가되는 AWB OFF/
+power_line_frequency 및 영상 속성 재쓰기다. 해당 항목은 이번 패치에서 동시에 바꾸지 않았다.
+원본 ZIP/PCAP/Windows 로그와 전체 분석은 ignored local/에 보관하며 공개 저장소에 넣지 않는다.

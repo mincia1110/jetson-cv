@@ -71,6 +71,37 @@ class FakeCamera(module.DinoLiteCamera):
 
 
 class CameraTests(unittest.TestCase):
+    def test_stream_restart_primes_twice_and_releases_on_failure(self):
+        from unittest.mock import MagicMock
+        camera = object.__new__(module.DinoLiteCamera)
+        camera.width, camera.height, camera.fps = 2592, 1944, 10
+        camera.device = '/dev/video0'
+        camera._stop = threading.Event()
+        camera._cap = None
+        fake_cv = types.SimpleNamespace(CAP_V4L2=200, CAP_PROP_FOURCC=6,
+                    CAP_PROP_FRAME_WIDTH=3, CAP_PROP_FRAME_HEIGHT=4, CAP_PROP_FPS=5,
+                    VideoWriter_fourcc=lambda *args: 123)
+        caps = [MagicMock(), MagicMock()]
+        for cap in caps:
+            cap.read.return_value = (True, np.zeros((480, 640, 3), dtype=np.uint8))
+            cap.get.side_effect = lambda prop: 123 if prop == 6 else 30
+        fake_cv.VideoCapture = MagicMock(side_effect=caps)
+        with patch.object(module, 'cv2', fake_cv), patch.object(module.time, 'sleep'):
+            camera._prime_windows_streams()
+        for cap in caps:
+            self.assertEqual(cap.read.call_count, 9)
+            cap.release.assert_called_once()
+            self.assertEqual([c.args for c in cap.set.call_args_list],
+                             [(6, 123), (3, 640), (4, 480), (5, 30)])
+        self.assertIsNone(camera._cap)
+        bad = MagicMock()
+        bad.read.return_value = (False, None)
+        fake_cv.VideoCapture = MagicMock(return_value=bad)
+        with patch.object(module, 'cv2', fake_cv), self.assertRaisesRegex(RuntimeError, 'expected 640x480'):
+            camera._prime_windows_streams()
+        bad.release.assert_called_once()
+        self.assertIsNone(camera._cap)
+
     def setUp(self):
         self.camera = FakeCamera()
         self.camera.ready.result(timeout=2)

@@ -10,3 +10,4 @@ artifacts/
 .env.*
 *.plan
 local/
+PairDrop_files_*.zip

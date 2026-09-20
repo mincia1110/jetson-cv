@@ -82,6 +82,9 @@ class DinoLiteCamera:
         self._windows_initialized = False
         self._publish()
         self._release()
+        restart = bool(self._fixed_config and self._fixed_config.get('windows_stream_restart'))
+        if restart:
+            self._prime_windows_streams()
         self._cap = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
         if not self._cap.isOpened():
             raise RuntimeError(f'Cannot open {self.device}')
@@ -91,6 +94,11 @@ class DinoLiteCamera:
                             (cv2.CAP_PROP_FPS, self.fps)):
             self._cap.set(prop, value)
         self._read()  # Start streaming before the vendor command.
+        if restart:
+            if (int(self._cap.get(cv2.CAP_PROP_FOURCC)) != cv2.VideoWriter_fourcc(*'MJPG')
+                    or abs(self._cap.get(cv2.CAP_PROP_FPS) - 10) > 0.1):
+                raise RuntimeError('Windows reset requires final MJPG 2592x1944 @ 10 fps')
+            time.sleep(0.68)
         self._led(False)
         if self._auto_exposure is not None and self._fixed_config is None:
             self._ae(self._auto_exposure)
@@ -111,6 +119,41 @@ class DinoLiteCamera:
         self._publish(frame)
         return {'width': frame.shape[1], 'height': frame.shape[0],
                 'fps': self._cap.get(cv2.CAP_PROP_FPS)}
+
+    def _prime_windows_streams(self):
+        """Opt-in V4L2 approximation of successful Windows reset negotiation.
+
+        Capture frames 8156/8212: YUY2 640x480 @30; 8268: MJPG @10.
+        Windows YUY2 is Linux YUYV. Never replay raw USB SET_INTERFACE while
+        uvcvideo owns the device. Intermediate frames must not reach the GUI.
+        """
+        if (self.width, self.height, self.fps) != (2592, 1944, 10):
+            raise ValueError('windows_stream_restart requires 2592x1944 @ 10 fps')
+        for stage in (1, 2):
+            try:
+                self._cap = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
+                if not self._cap.isOpened():
+                    raise RuntimeError(f'Cannot open {self.device} for reset stage {stage}')
+                for prop, value in ((cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV')),
+                                    (cv2.CAP_PROP_FRAME_WIDTH, 640),
+                                    (cv2.CAP_PROP_FRAME_HEIGHT, 480),
+                                    (cv2.CAP_PROP_FPS, 30)):
+                    self._cap.set(prop, value)
+                # About 0.28 seconds streaming per intermediate Windows stage.
+                for _ in range(9):
+                    if self._stop.is_set():
+                        raise RuntimeError('Camera stopping')
+                    ok, frame = self._cap.read()
+                    if not ok or frame is None or frame.shape[:2] != (480, 640):
+                        raise RuntimeError(f'Windows reset stage {stage}: expected 640x480 frame')
+                if (int(self._cap.get(cv2.CAP_PROP_FOURCC)) != cv2.VideoWriter_fourcc(*'YUYV')
+                        or abs(self._cap.get(cv2.CAP_PROP_FPS) - 30) > 0.1):
+                    raise RuntimeError(f'Windows reset stage {stage}: YUYV @30 unavailable')
+                print(f'[camera reset] stream {stage}/3: YUYV 640x480 @30', flush=True)
+            finally:
+                self._release()
+            time.sleep(0.72)
+        print('[camera reset] stream 3/3: opening MJPG 2592x1944 @10', flush=True)
 
     def _capture(self, count, roi):
         # All read() calls live in this worker, including the preview and burst.
@@ -286,11 +329,13 @@ class DinoLiteCamera:
             return False
         if config['camera_profile'] not in ('windows_800', 'windows_800_full'):
             return False
-        keys = ('camera_profile', 'ExposureTime', 'Brightness', 'video_controls')
+        keys = ('camera_profile', 'ExposureTime', 'Brightness', 'video_controls',
+                'windows_stream_restart')
         return all(config.get(key) == self._fixed_config.get(key) for key in keys)
 
     def _check_conditions(self, config, manual_retry=False, on_recovery=None, include_frame=False):
         report = {'camera_profile': config.get('camera_profile', 'fixed'), 'before': None, 'reset_performed': False, 'after': None,
+                  'windows_stream_restart': config.get('windows_stream_restart', False),
                   'brightness_before_apply': None, 'fixed_settings_applied': False,
                   'ExposureTime_requested': config['ExposureTime'],
                   'exposure_mode': 'fixed', 'exposure_verified': False,

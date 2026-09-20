@@ -44,6 +44,11 @@ def validate_conditions(config):
     if profile not in ('fixed', 'windows_800', 'windows_800_full'):
         raise ValueError('camera_profile must be fixed, windows_800 or windows_800_full')
     result['camera_profile'] = profile
+    restart = result.setdefault('windows_stream_restart', False)
+    if type(restart) is not bool:
+        raise ValueError('windows_stream_restart: true or false required')
+    if restart and profile == 'fixed':
+        raise ValueError('windows_stream_restart requires a windows_800 profile')
     if profile in ('windows_800', 'windows_800_full'):
         if result.get('ExposureValue', 800) != 800:
             raise ValueError('windows_800 supports ExposureValue 800 only')
