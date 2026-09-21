@@ -117,6 +117,7 @@ class DinoLiteCamera:
         for _ in range(max(1, self.warmup_frames)):
             frame = self._read()
         self._publish(frame)
+        print('[camera stream] initialization/warmup complete; live preview begins', flush=True)
         return {'width': frame.shape[1], 'height': frame.shape[0],
                 'fps': self._cap.get(cv2.CAP_PROP_FPS)}
 
@@ -162,6 +163,7 @@ class DinoLiteCamera:
         y0, y1, x0, x1 = roi
         if not (0 <= y0 < y1 <= self.height and 0 <= x0 < x1 <= self.width):
             raise ValueError(f'Invalid ROI: {roi}')
+        print(f'[camera capture] begin burst: {count} frames', flush=True)
         first = None
         total = None
         for _ in range(count):
@@ -173,6 +175,7 @@ class DinoLiteCamera:
             self._publish(frame)
         # Preserve test.py's behavior: average ROI, keep first frame outside ROI.
         first[y0:y1, x0:x1] = (total / count).astype(np.uint8)
+        print('[camera capture] end burst', flush=True)
         return first
 
     def _reconnect(self):

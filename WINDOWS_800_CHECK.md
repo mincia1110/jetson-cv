@@ -212,3 +212,48 @@ USB 등록을 최대 10초 기다리며 영상 노드(index0)를 선택한다. /
 동일 모델이 여러 대면 모호성 오류를 표시한다. 대기는 카메라 worker에서 수행한다.
 터미널의 `Dino-Lite rediscovered: ... -> ...`를 확인한다. USB 재연결로 번호가 달라지는
 경우까지 실물 검증이 필요하다. 최초 GUI 실행의 장치 경로 설정은 기존대로 유지한다.
+
+## NvMap 표시 설정 및 JPEG 경고 진단
+
+`data.json`에 `"hide_nvmap_messages": true`를 추가하고 같은 작업 폴더에서 실행:
+
+```bash
+python ../../scripts/run_mosa_logged.py
+```
+
+위 명령은 MOSA_comb/MOSA_comb에서 실행할 때의 경로다. 저장소 루트라면
+`python scripts/run_mosa_logged.py`를 사용한다. 실행 대상은 작업 폴더의
+MOSA_visualAD_comb_jetson.py이며 같은 venv Python·data.json·작업 폴더를 사용한다.
+이 표시 설정은 실행기에만 적용되며 기존 python MOSA_visualAD_comb_jetson.py 직접 실행은
+그대로다. 설정 생략/false이면 전부 표시한다. 실행 중 변경은 재실행 후 반영된다.
+
+숨기는 것은 정확히 다음 두 줄뿐이다:
+- NvMapMemAllocInternalTagged: 1075072515 error 12
+- NvMapMemHandleAlloc: error 0
+
+다른 NvMap 오류, traceback, JPEG 경고는 유지한다. 숨긴 줄도 원본 출력과 함께
+artifacts/runtime-logs/mosa-*.log에 수신 시각을 붙여 기록한다. 표시 생략은 오류 해결이
+아니며 프로세스 종료 코드도 그대로 전달한다. 네이티브 라이브러리의 출력 버퍼 때문에
+수신 시각과 실제 발생 시각은 다를 수 있다.
+
+Corrupt JPEG data: premature end of data segment는 JPEG 디코더가 예상보다 일찍
+압축 데이터의 끝을 만난 경고다. USB 전송 손실, 카메라 출력, 디코더 처리 차이 중
+원인을 현재 로그만으로 확정할 수 없다. OpenCV는 경고 후에도 영상을 반환할 수 있어
+현재 read 성공/크기 검사는 완전한 JPEG 무결성 검사가 아니다. JPEG 경고를 숨기거나
+정상 프레임으로 검증됐다고 간주하지 않는다. 이번 변경은 진단이며 손상 프레임
+자동 폐기 기능을 구현한 것은 아니다.
+
+1. 실행기로 켜서 USB 재연결→리셋→READY까지 수행한다.
+2. `initialization/warmup complete; live preview begins` 이후 측정 없이 30초 관찰한다.
+3. 수동 측정 5회. `begin burst`/`end burst` 구간과 JPEG warning 누적 번호를 비교한다.
+4. 종료 후 로그를 공유한다. 초기화에만 경고가 나는지, preview/측정 중에도 지속되는지
+   분리한다. 별도 터미널에서 아래 커널 로그도 확보한다(권한이 있는 경우):
+
+```bash
+sudo journalctl -k -b --since '10 minutes ago' > artifacts/kernel-usb-reconnect.log
+```
+
+커널 USB/uvcvideo 오류와 시각을 대조한다. 현재 RG gap을 재현한 노출/WB 설정과 fps는
+진단 중 바꾸지 않는다. 지속되면 raw MJPEG 캡처와 별도 디코딩으로 다음 원인을 분리한다.
+근거: https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/jdhuff.c
+및 https://github.com/opencv/opencv/blob/4.x/modules/videoio/src/cap_v4l.cpp
