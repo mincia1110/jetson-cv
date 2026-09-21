@@ -181,7 +181,46 @@ class DinoLiteCamera:
         self._publish()
         self._release()
         time.sleep(1.0)
+        self._rediscover_device()
         return self._open()
+
+    @staticmethod
+    def _dinolite_nodes(root=Path('/sys/class/video4linux')):
+        nodes = []
+        for entry in root.glob('video*'):
+            try:
+                # UVC metadata is a separate video node; select stream index 0.
+                if entry.joinpath('index').read_text().strip() != '0':
+                    continue
+                for parent in entry.resolve().parents:
+                    vendor = parent / 'idVendor'
+                    if vendor.exists():
+                        if (vendor.read_text().strip().lower() == 'a168'
+                                and (parent / 'idProduct').read_text().strip().lower() == '0960'):
+                            nodes.append('/dev/' + entry.name)
+                        break
+            except OSError:
+                # Enumeration may disappear midway through a USB reconnect.
+                continue
+        return sorted(nodes)
+
+    def _rediscover_device(self):
+        """Wait for USB enumeration on the camera worker, never on Tk's thread."""
+        print('[camera reset] waiting for Dino-Lite USB enumeration (10s)', flush=True)
+        deadline = time.monotonic() + 10
+        while not self._stop.is_set():
+            nodes = self._dinolite_nodes()
+            if len(nodes) > 1:
+                raise RuntimeError('Multiple Dino-Lite cameras found; connect only the target camera')
+            if nodes and Path(nodes[0]).exists():
+                previous = self.device
+                self.device = nodes[0]
+                print(f'[camera reset] Dino-Lite rediscovered: {previous} -> {self.device}', flush=True)
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Dino-Lite USB enumeration timed out; reconnect USB and retry measurement')
+            self._stop.wait(0.2)
+        raise RuntimeError('Camera stopping')
 
     def _submit(self, action, *args):
         future = Future()
@@ -232,6 +271,24 @@ class DinoLiteCamera:
                 self._command(['uvcdynctrl', '-d', self.device, '-S',
                                f"4:{item['selector']}", item['payload']])
             else:
+                if (config['windows_control_trial'] == 'no_added_awb'
+                        and item['control'] == 'white_balance_temperature'):
+                    # A USB power cycle restores AWB=1, making manual WB inactive.
+                    # Do not disturb the successful warm-reset path (AWB already 0).
+                    state = self._command(['v4l2-ctl', '-d', self.device,
+                                           '--get-ctrl=white_balance_automatic'])
+                    awb = int(state.rsplit(':', 1)[1].strip())
+                    if awb not in (0, 1):
+                        raise RuntimeError(f'Unexpected AWB state: {awb}')
+                    if awb == 1:
+                        print('[camera reset] AWB=1: disabling immediately before manual WB '
+                              '(USB reconnect recovery)', flush=True)
+                        self._command(['v4l2-ctl', '-d', self.device,
+                                       '--set-ctrl=white_balance_automatic=0'])
+                        state = self._command(['v4l2-ctl', '-d', self.device,
+                                               '--get-ctrl=white_balance_automatic'])
+                        if int(state.rsplit(':', 1)[1].strip()) != 0:
+                            raise RuntimeError('AWB remained ON; manual WB cannot be applied')
                 self._command(['v4l2-ctl', '-d', self.device,
                                f"--set-ctrl={item['control']}={item['value']}"])
         self._auto_exposure = False

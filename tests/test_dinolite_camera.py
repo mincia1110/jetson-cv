@@ -20,6 +20,9 @@ with patch.dict('sys.modules', {'cv2': types.SimpleNamespace()}):
 
 
 class FakeCamera(module.DinoLiteCamera):
+    def _rediscover_device(self):
+        self.record('rediscover')
+
     def __init__(self):
         self.calls = []
         self.sequence = 0
@@ -71,6 +74,38 @@ class FakeCamera(module.DinoLiteCamera):
 
 
 class CameraTests(unittest.TestCase):
+    def test_rediscovery_updates_device_and_handles_missing_or_ambiguous_camera(self):
+        camera = object.__new__(module.DinoLiteCamera)
+        camera.device = '/dev/video0'
+        camera._stop = threading.Event()
+        with patch.object(camera, '_dinolite_nodes', return_value=['/dev/video2']), patch.object(module.Path, 'exists', return_value=True):
+            camera._rediscover_device()
+        self.assertEqual(camera.device, '/dev/video2')
+        with patch.object(camera, '_dinolite_nodes', return_value=[]), patch.object(module.time, 'monotonic', side_effect=[0, 11]):
+            with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                camera._rediscover_device()
+        with patch.object(camera, '_dinolite_nodes', return_value=['/dev/video0', '/dev/video2']):
+            with self.assertRaisesRegex(RuntimeError, 'Multiple'):
+                camera._rediscover_device()
+
+    def test_discovery_filters_usb_identity_and_metadata(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            usb = root / 'usb'
+            usb.mkdir()
+            (usb / 'idVendor').write_text('a168')
+            (usb / 'idProduct').write_text('0960')
+            video = usb / 'video4linux'
+            video.mkdir()
+            for name, index in [('video2', '0'), ('video3', '1')]:
+                entry = video / name
+                entry.mkdir()
+                (entry / 'index').write_text(index)
+            self.assertEqual(module.DinoLiteCamera._dinolite_nodes(video), ['/dev/video2'])
+            (usb / 'idVendor').write_text('1234')
+            self.assertEqual(module.DinoLiteCamera._dinolite_nodes(video), [])
+
     def test_stream_restart_primes_twice_and_releases_on_failure(self):
         from unittest.mock import MagicMock
         camera = object.__new__(module.DinoLiteCamera)
@@ -193,6 +228,48 @@ class CameraTests(unittest.TestCase):
         commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
         self.assertNotIn('--set-ctrl=power_line_frequency=2', commands)
         self.assertFalse(self.camera._windows_initialized)
+
+    def test_usb_reconnect_awb_is_disabled_only_immediately_before_wb(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 18,
+                  'Brightness': 16, 'camera_profile': 'windows_800_full',
+                  'windows_control_trial': 'no_added_awb'}
+        self.camera.video_values.update(white_balance_automatic=1, power_line_frequency=2)
+        original = self.camera._command
+
+        def enforce_inactive(args):
+            if args[-1] == '--set-ctrl=white_balance_temperature=5800':
+                if self.camera.video_values['white_balance_automatic']:
+                    raise RuntimeError('white_balance_temperature: Permission denied')
+            return original(args)
+
+        with patch.object(module.time, 'sleep'), patch.object(self.camera, '_command', side_effect=enforce_inactive):
+            self.camera.apply_initial(config).result(timeout=2)
+        commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+        off = '--set-ctrl=white_balance_automatic=0'
+        self.assertEqual(commands.count(off), 1)
+        position = commands.index(off)
+        self.assertGreater(position, commands.index('--set-ctrl=gamma=5'))
+        self.assertEqual(commands[position + 1], '--get-ctrl=white_balance_automatic')
+        self.assertEqual(commands[position + 2], '--set-ctrl=white_balance_temperature=5800')
+
+    def test_awb_refuses_to_disable_blocks_manual_wb(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 18,
+                  'Brightness': 16, 'camera_profile': 'windows_800_full',
+                  'windows_control_trial': 'no_added_awb'}
+        self.camera.video_values.update(white_balance_automatic=1, power_line_frequency=2)
+        original = self.camera._command
+
+        def stuck_awb(args):
+            result = original(args)
+            if args[-1] == '--set-ctrl=white_balance_automatic=0':
+                self.camera.video_values['white_balance_automatic'] = 1
+            return result
+
+        with patch.object(module.time, 'sleep'), patch.object(self.camera, '_command', side_effect=stuck_awb):
+            with self.assertRaisesRegex(RuntimeError, 'AWB remained ON'):
+                self.camera.apply_initial(config).result(timeout=2)
+        commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+        self.assertNotIn('--set-ctrl=white_balance_temperature=5800', commands)
 
     def test_windows_profile_sequence_no_time_overwrite_and_ae_only_on_reset(self):
         config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
