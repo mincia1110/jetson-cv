@@ -156,6 +156,44 @@ class CameraTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.camera.apply_initial(dict(config, Brightness=20))
 
+    def test_control_trials_remove_only_selected_writes_and_preserve_retry(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 18,
+                  'Brightness': 16, 'camera_profile': 'windows_800_full'}
+        for stage, awb_count in [('no_post_writes', 1), ('no_added_awb', 0)]:
+            with self.subTest(stage=stage):
+                self.camera.video_values.update(white_balance_automatic=0, power_line_frequency=2)
+                self.camera._windows_initialized = False
+                self.camera.calls.clear()
+                selected = dict(config, windows_control_trial=stage)
+                with patch.object(module.time, 'sleep'):
+                    self.camera.apply_initial(selected).result(timeout=2)
+                commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+                self.assertEqual(commands.count('--set-ctrl=brightness=16'), 1)
+                self.assertEqual(commands.count('--set-ctrl=white_balance_temperature=5800'), 1)
+                self.assertEqual(commands.count('--set-ctrl=white_balance_automatic=0'), awb_count)
+                self.assertNotIn('--set-ctrl=power_line_frequency=2', commands)
+                self.assertEqual(commands.count('05000000004600'), 1)
+                self.camera.calls.clear()
+                self.camera.apply_initial(selected).result(timeout=2)
+                self.assertFalse(any(isinstance(kind, tuple) for kind, _ in self.camera.calls))
+                with patch.object(module.time, 'sleep'):
+                    self.camera.reconnect().result(timeout=2)
+                commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+                self.assertEqual(commands.count('05000000004600'), 1)
+                self.assertEqual(commands.count('--set-ctrl=brightness=16'), 1)
+
+    def test_control_trial_mismatch_does_not_auto_correct(self):
+        config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 18,
+                  'Brightness': 16, 'camera_profile': 'windows_800_full',
+                  'windows_control_trial': 'no_post_writes'}
+        self.camera.video_values['power_line_frequency'] = 1
+        with patch.object(module.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'power_line_frequency readback mismatch'):
+                self.camera.apply_initial(config).result(timeout=2)
+        commands = [kind[-1] for kind, _ in self.camera.calls if isinstance(kind, tuple)]
+        self.assertNotIn('--set-ctrl=power_line_frequency=2', commands)
+        self.assertFalse(self.camera._windows_initialized)
+
     def test_windows_profile_sequence_no_time_overwrite_and_ae_only_on_reset(self):
         config = {'BRIGHT_min': 0, 'BRIGHT_max': 255, 'RG_gab': 255,
                   'Brightness': 16, 'ExposureValue': 800, 'ExposureTime': '1/8s',

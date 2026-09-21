@@ -220,11 +220,12 @@ class DinoLiteCamera:
         """
         return self._submit('prepare', validate_conditions(config), manual_retry, on_recovery)
 
-    def _replay_windows_capture(self):
+    def _replay_windows_capture(self, config):
         path = Path(__file__).with_name('windows_800_capture.json')
         sequence = json.loads(path.read_text(encoding='utf-8'))
         # Set the AWB state observed by GET_CUR in the Windows capture.
-        self._command(['v4l2-ctl', '-d', self.device, '--set-ctrl=white_balance_automatic=0'])
+        if config['windows_control_trial'] != 'no_added_awb':
+            self._command(['v4l2-ctl', '-d', self.device, '--set-ctrl=white_balance_automatic=0'])
         for item in sequence:
             time.sleep(item['delay_s'])
             if item['kind'] == 'xu':
@@ -238,10 +239,17 @@ class DinoLiteCamera:
     def _apply_fixed(self, config):
         if self._cap is None:
             raise RuntimeError('Camera unavailable; reconnect first')
+        trial = config.get('windows_control_trial', 'baseline')
+        if self._windows_initialized and trial != 'baseline':
+            if not self._preserve_windows_settings(config, True):
+                raise RuntimeError('Camera trial settings changed; restart GUI before comparison')
+            # Diagnostic callers must not silently reintroduce writes on retry.
+            return {'mode': 'preserved', 'windows_control_trial': trial}
         self._led(False)
         full_replay = config.get('camera_profile') == 'windows_800_full' and not self._windows_initialized
         if full_replay:
-            self._replay_windows_capture()
+            print(f'[camera reset] windows_control_trial={trial}', flush=True)
+            self._replay_windows_capture(config)
         elif config.get('camera_profile') in ('windows_800', 'windows_800_full'):
             initializing = not self._windows_initialized
             if initializing:
@@ -268,12 +276,22 @@ class DinoLiteCamera:
             self._ae(False)
             self._command(['uvcdynctrl', '-d', self.device, '-S', '4:2',
                            EXPOSURE_COMMANDS[config['ExposureTime']]])
-        self._command(['v4l2-ctl', '-d', self.device,
-                       f"--set-ctrl=brightness={config['Brightness']}"])
+        skip_post = full_replay and trial != 'baseline'
+        if not skip_post:
+            self._command(['v4l2-ctl', '-d', self.device,
+                           f"--set-ctrl=brightness={config['Brightness']}"])
         actual = self._brightness()
         if actual != config['Brightness']:
             raise RuntimeError(f"Brightness 적용 실패: target={config['Brightness']}, actual={actual}")
-        self._apply_video_controls(config)
+        if skip_post:
+            actual_controls = self._video_control_values(config)
+            print(f'[camera reset] post replay readback only: {actual_controls}', flush=True)
+            for name, requested in config['video_controls'].items():
+                if actual_controls[name] != requested:
+                    raise RuntimeError(f'{name} readback mismatch: target={requested}, '
+                                       f'actual={actual_controls[name]}; trial does not correct controls')
+        else:
+            self._apply_video_controls(config)
         self._fixed_config = dict(config)
         self.controls['brightness'] = config['Brightness']
         for _ in range(config['settle_frames']):
@@ -330,12 +348,13 @@ class DinoLiteCamera:
         if config['camera_profile'] not in ('windows_800', 'windows_800_full'):
             return False
         keys = ('camera_profile', 'ExposureTime', 'Brightness', 'video_controls',
-                'windows_stream_restart')
+                'windows_stream_restart', 'windows_control_trial')
         return all(config.get(key) == self._fixed_config.get(key) for key in keys)
 
     def _check_conditions(self, config, manual_retry=False, on_recovery=None, include_frame=False):
         report = {'camera_profile': config.get('camera_profile', 'fixed'), 'before': None, 'reset_performed': False, 'after': None,
                   'windows_stream_restart': config.get('windows_stream_restart', False),
+                  'windows_control_trial': config.get('windows_control_trial', 'baseline'),
                   'brightness_before_apply': None, 'fixed_settings_applied': False,
                   'ExposureTime_requested': config['ExposureTime'],
                   'exposure_mode': 'fixed', 'exposure_verified': False,

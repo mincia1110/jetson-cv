@@ -6,6 +6,18 @@ import camera_conditions as conditions
 
 
 class ConditionTests(unittest.TestCase):
+    def test_control_trial_validation(self):
+        config = dict(BRIGHT_min=0, BRIGHT_max=255, RG_gab=18,
+                      Brightness=16, ExposureTime='1/8s')
+        self.assertEqual(conditions.validate_conditions(config)['windows_control_trial'], 'baseline')
+        for trial in ('typo', True, 'no_post_writes', 'no_added_awb'):
+            with self.assertRaises(ValueError):
+                conditions.validate_conditions(dict(config, windows_control_trial=trial))
+        for trial in ('no_post_writes', 'no_added_awb'):
+            result = conditions.validate_conditions(dict(config, camera_profile='windows_800_full',
+                                                          windows_control_trial=trial))
+            self.assertEqual(result['windows_control_trial'], trial)
+
     def test_stream_restart_only_accepts_boolean_for_windows_profiles(self):
         config = dict(BRIGHT_min=0, BRIGHT_max=255, RG_gab=18,
                       Brightness=16, ExposureTime='1/8s')

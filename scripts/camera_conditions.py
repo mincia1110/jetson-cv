@@ -44,6 +44,11 @@ def validate_conditions(config):
     if profile not in ('fixed', 'windows_800', 'windows_800_full'):
         raise ValueError('camera_profile must be fixed, windows_800 or windows_800_full')
     result['camera_profile'] = profile
+    stage = result.setdefault('windows_control_trial', 'baseline')
+    if stage not in ('baseline', 'no_post_writes', 'no_added_awb'):
+        raise ValueError('windows_control_trial: baseline, no_post_writes or no_added_awb required')
+    if stage != 'baseline' and profile != 'windows_800_full':
+        raise ValueError('windows_control_trial requires windows_800_full')
     restart = result.setdefault('windows_stream_restart', False)
     if type(restart) is not bool:
         raise ValueError('windows_stream_restart: true or false required')

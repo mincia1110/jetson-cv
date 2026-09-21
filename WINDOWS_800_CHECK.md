@@ -129,3 +129,56 @@ RG_diff≈5 복구는 아직 Jetson에서 확인되지 않았다. 차이가 남�
 Windows e0 조회의 GET 응답 왕복, 드라이버의 제어값 캐시, Linux에서 추가되는 AWB OFF/
 power_line_frequency 및 영상 속성 재쓰기다. 해당 항목은 이번 패치에서 동시에 바꾸지 않았다.
 원본 ZIP/PCAP/Windows 로그와 전체 분석은 ignored local/에 보관하며 공개 저장소에 넣지 않는다.
+
+## 추가 제어 쓰기 분리 시험 (2026-09-21)
+
+Jetson에서 스트림 전환 패치 이후에도 수동 재측정 RG_diff=17이라는 결과를 받았다.
+또한 실행 커널 5.15.148-tegra의 CONFIG_USB_MON이 비활성화돼 usbmon 캡처는 현재 불가하다.
+다음 비교에서는 스트림 옵션·노출·조명·시료·검사 임계값을 고정하고 추가 쓰기만 변경한다.
+GET 왕복 재현과 커널 변경은 아직 적용하지 않았다.
+
+`camera_profile: windows_800_full` 전용 `windows_control_trial` 옵션:
+
+| 값 | 재생 전 AWB OFF | 재생 후 밝기/영상 제어 재쓰기 |
+|---|---|---|
+| baseline (생략 시 기본값) | 유지 | 유지 |
+| no_post_writes (1단계) | 유지 | 생략 |
+| no_added_awb (2단계) | 생략 | 생략 |
+
+78개 캡처 쓰기, 스트림 옵션, LED 명령, 노출 명령/대기 시간은 세 단계에서 같다.
+즉 no_added_awb도 순수 USB 재생을 뜻하지 않는다. Linux 드라이버의 내부 동작은 남는다.
+재생 뒤에는 제어값을 읽고 검증한다. WB/전원 주파수 등을 목표와 맞추기 위한 추가 쓰기는 없다.
+읽기 결과가 다르면 해당 값과 목표를 표시하고 실패 처리한다. 이를 색감 시험 성공으로
+해석하거나 임계값을 완화하지 않는다. 특히 2단계에서 AWB가 ON으로 남으면 수동 WB 쓰기가
+실패할 수도 있다. 이때의 오류도 비교 결과이므로 로그를 보관한다.
+
+### 1단계: 재생 후 중복 쓰기 제거
+
+기존 data.json에서 Windows 기본 video_controls는 유지하고 다음을 병합한다.
+
+```json
+"camera_profile": "windows_800_full",
+"windows_control_trial": "no_post_writes",
+"ExposureValue": 800,
+"Brightness": 16,
+"reset_flag_en": 1
+```
+
+windows_stream_restart는 직전 시험값을 그대로 둔다. GUI를 완전히 종료 후 재시작한다.
+터미널 `windows_control_trial=no_post_writes`와 `post replay readback only`를 확인한다.
+정상 외부 조명에서 최초 측정→기준 미달→FAIL(WAIT)→리셋→회색 READY→수동 재측정을
+수행한다. 정상 측정 5회의 RGB/RG_diff/score와 before/after 보고서를 남긴다.
+재측정 settings_action은 preserved여야 하며 보고서에 선택한 windows_control_trial이 나온다.
+동일한 설정을 사용하는 진단 도구에서 재적용을 요청해도 실험 모드는 노출/WB를 다시 쓰지 않는다.
+리셋/재연결 때는 선택한 단계로 전체 캡처 시퀀스를 다시 실행한다.
+
+### 2단계: 재생 전 AWB OFF도 제거
+
+1단계에서 RG_diff=17 부근이 유지되면 `windows_control_trial`만 `no_added_awb`로 바꾸고
+GUI를 재시작해 동일한 과정을 수행한다. 1단계에서 개선되면 먼저 그 결과를 기록하고 반복
+재현성을 확인한다. 실행 중 단계 전환은 비교에 사용하지 않는다.
+
+원복은 `windows_control_trial: baseline`으로 변경 후 재시작한다.
+설정 변경 중 카메라 내부 상태가 이월될 수 있으므로, 비교별 시작 조건(USB 재연결 여부,
+Windows에서 사용 직후인지)을 함께 기록하고 동일하게 유지한다.
+현재 실물 RG gap 개선은 미검증이다. 로그/패킷의 차이를 하나씩 분리하는 진단 옵션이다.
