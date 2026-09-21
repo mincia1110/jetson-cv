@@ -78,7 +78,7 @@ python -m pip check
 | GUI·시각화 | Matplotlib, Pillow |
 | 기존 VisualAD import 의존성 | tqdm, ftfy, regex, scikit-learn, tabulate, scikit-image, seaborn |
 
-Torch·Torchvision·ONNX Runtime GPU는 ARM64/Python/CUDA 조합에 맞는 빌드를 별도로 설치했다. `requirements-inference.txt`만으로 모든 GPU 패키지와 사내 코드까지 설치되는 것은 아니다. 실제 사용한 wheel과 `pip freeze`를 보관해야 정확한 재설치가 가능하다. 본 보고서의 버전은 해당 장비에서 확인한 이력이며, 현재 온라인 인덱스의 배포 여부를 보증하는 목록은 아니다.
+Torch·Torchvision·ONNX Runtime GPU는 ARM64/Python/CUDA 조합에 맞는 빌드를 별도로 설치했다. `requirements-inference.txt`만으로 모든 GPU 패키지와 사내 코드까지 설치되는 것은 아니다. 실제 사용한 wheel과 `pip freeze`를 보관해야 재설치 재현성을 높일 수 있다. 생성한 wheel-backup의 복구 절차와 한계는 3.5절에 정리했다. 본 보고서의 버전은 해당 장비에서 확인한 이력이며, 현재 온라인 인덱스의 배포 여부를 보증하는 목록은 아니다.
 
 ### 3.3 cuDSS 경로 문제 해결
 
@@ -96,6 +96,129 @@ python -c "import torch, torchvision; print(torch.__version__, torchvision.__ver
 실제 ONNX 모델, 기존 `data.json`, `utils.transforms` 등 사내 전처리 코드는 별도로 필요하다. 공개 저장소를 받는 것만으로 전체 검사 자원이 갖춰지는 것은 아니다.
 
 메인은 **현재 작업 폴더의 data.json**을 읽으며 모델·CSV 등의 상대 경로도 그 폴더를 기준으로 해석한다. Windows 드라이브 경로를 Linux 경로로 수정하고 메인과 `scripts/`를 함께 갱신한다.
+
+### 3.5 생성한 wheel-backup을 이용한 복구
+
+사용자가 기존 장비에서 안내한 백업 절차를 수행하고 `wheel-backup`을 생성했다고 보고했다. 백업 내용과 해시는 아직 이 작업 환경에서 직접 검사하지 않았으며, 신규 SD에서의 복구 성공도 별도 검증 대상이다.
+
+#### 백업 구성과 복구 범위
+
+```text
+wheel-backup/
+├── wheels/                  # 캐시에서 복사한 wheel + 다시 다운로드한 GPU wheel
+├── gpu-requirements.txt     # 설치 시점 Torch/Torchvision/ORT GPU 버전
+├── environment-venv.txt     # venv 로컬 패키지의 freeze --local --all
+├── environment-all.txt      # 공유 시스템 패키지를 포함한 freeze --all
+├── system-packages.txt      # dpkg-query -W 결과
+├── python-version.txt
+├── kernel.txt
+├── cached-wheels.txt        # 기존 장비의 캐시 경로 기록; 복원 경로가 아님
+└── SHA256SUMS
+```
+
+GPU 패키지는 `--no-deps`로 다운로드했으므로 **현재 백업만으로 전체 의존성이 갖춰졌다고 간주하지 않는다.** 캐시의 wheel도 현재 프로젝트와 무관한 파일을 포함할 수 있다. `wheels/*.whl` 전체를 한 번에 설치하지 않고 대상 패키지와 버전을 지정한다.
+
+| 복구 대상 | 백업의 역할 | 별도로 필요한 것 |
+|---|---|---|
+| Torch/Torchvision/ONNX Runtime GPU | 보관한 호환 wheel로 재설치 | 해당 wheel이 요구하는 의존성 및 CUDA/cuDNN/cuDSS |
+| 나머지 venv 패키지 | 버전 목록과 일부 wheel | 누락 wheel, 직접 URL·로컬 소스 설치 항목 |
+| OS·JetPack·시스템 OpenCV·TensorRT | system-packages.txt로 비교 | SD 이미지와 시스템 패키지 설치 파일/저장소 |
+| MOSA 소스·설정·모델 | wheel 백업에 포함되지 않음 | Git 커밋, data.json, 사내 utils, ONNX/엔진 별도 백업 |
+
+`system-packages.txt`는 시스템 설치 파일 묶음이 아니며 이를 그대로 pip에 입력하지 않는다. `environment-all.txt` 역시 apt 관리 Python 패키지까지 pip로 덮어쓰는 복구 목록으로 사용하지 않는다. 재다운로드한 wheel의 SHA256은 보관 파일의 무결성을 확인하지만, 기존 장비가 최초 설치했던 wheel과 동일한 빌드임을 소급 증명하지 않는다.
+
+#### A. 백업 파일과 대상 시스템 확인
+
+백업 폴더 전체를 다른 저장 매체에도 보관한다. 새 장비에서 다음 명령을 **wheel-backup 폴더 안에서** 실행한다.
+
+```bash
+sha256sum -c SHA256SUMS
+cat python-version.txt
+cat kernel.txt
+cat gpu-requirements.txt
+```
+
+해시 누락·불일치가 있으면 해당 파일을 다시 확보한다. SHA256SUMS에는 wheel 파일만 들어 있으며 환경 기록·설정·모델을 검증하는 목록은 아니다.
+
+새 SD에 3.1절의 시스템 환경을 구성한 뒤 실제 버전을 비교한다.
+
+```bash
+uname -m
+python3 --version
+cat /etc/nv_tegra_release
+dpkg-query -W nvidia-l4t-core nvidia-jetpack libcudss0-cuda-12
+```
+
+ARM64/Python 3.10 기준을 맞추고 CUDA·cuDNN·TensorRT·cuDSS를 준비한다. 기존 장비는 L4T 36.4.7로 업데이트됐으므로 초기 36.4.4 SD 상태를 그대로 동일 환경이라고 부르지 않는다. 커널 이름만으로 버전을 판단하지 않고 system-packages.txt와 실제 패키지 버전을 대조한다. 서로 다르면 그 차이를 기록하고 호환성 검증을 수행한다.
+
+#### B. 기존 운영 venv를 보존하고 복구용 venv 생성
+
+아래는 저장소 루트에서 실행한다. 백업을 `artifacts/wheel-backup`에 복사했다고 가정한다. 다른 위치라면 MOSA_WHEEL_BACKUP만 실제 경로로 바꾼다. `.venv-restore`는 없는 이름이어야 하며 운영 중인 `.venv`에 덮어쓰지 않는다.
+
+```bash
+export MOSA_WHEEL_BACKUP="$PWD/artifacts/wheel-backup"
+python3 -m venv --system-site-packages .venv-restore
+source .venv-restore/bin/activate
+python -c "import sys; print(sys.executable)"
+```
+
+시스템 OpenCV·TensorRT 공유가 목적이다. 복구 venv 경로는 로컬 자료로 관리하고 Git에 추가하지 않는다. cuDSS 경로가 필요한 장비에서는 3.3절의 LD_LIBRARY_PATH를 적용한다.
+
+#### C. 보관 GPU wheel 설치
+
+먼저 보관 폴더만 사용하는 설치를 시도한다.
+
+```bash
+python -m pip install \
+  --no-index \
+  --find-links="$MOSA_WHEEL_BACKUP/wheels" \
+  --only-binary=:all: \
+  -r "$MOSA_WHEEL_BACKUP/gpu-requirements.txt"
+```
+
+복구 때는 `--no-deps`를 사용하지 않는다. 의존성이 시스템 또는 venv에 없고 백업에도 없으면 설치가 실패할 수 있으며, 이는 불완전한 백업 범위를 드러내는 결과다. 버전을 임의로 바꾸거나 --no-deps로 무시하지 않는다. 패키지명·요구 버전을 기록하고 동일 환경의 온라인 장비에서 누락 wheel을 확보한 뒤 다시 실행한다. 다운로드에 사용한 인덱스/빌드 출처도 함께 기록한다.
+
+`--no-index`는 패키지 인덱스 탐색을 막는다. 다만 requirements 안에 직접 HTTP URL이 있으면 그 URL 사용까지 막는 옵션은 아니므로, 오프라인용 목록에는 직접 URL이 없어야 한다. gpu-requirements.txt는 앞서 생성한 `이름==버전` 세 줄인지 확인한다. [pip 로컬 패키지 설치 안내](https://pip.pypa.io/en/stable/user_guide/#installing-from-local-packages)
+
+#### D. 나머지 Python 의존성 복구
+
+`environment-venv.txt`를 검토해 별도 `restore-requirements.txt`를 만든다. 일반적인 `이름==버전` 항목은 유지하고, `-e`, `@ file:`, HTTP URL, 로컬 프로젝트 항목은 보관한 소스/wheel을 사용하도록 개별 정리한다. GPU 세 패키지도 원래 버전으로 유지한다. 시스템 OpenCV·TensorRT를 다른 pip 배포판으로 치환하지 않는다.
+
+모든 필요한 wheel이 준비되면 다음으로 복구한다.
+
+```bash
+python -m pip install \
+  --no-index \
+  --find-links="$MOSA_WHEEL_BACKUP/wheels" \
+  --only-binary=:all: \
+  -r "$MOSA_WHEEL_BACKUP/restore-requirements.txt"
+python -m pip check
+```
+
+현재 캐시에는 의존성 전체가 없을 수 있어 위 명령의 성공을 미리 보장하지 않는다. 추가 다운로드 시 기존 GPU wheel은 보존하고, 일반 패키지와 Jetson 전용 패키지의 출처를 구분한다. 보충한 파일까지 포함하도록 백업 폴더에서 `sha256sum wheels/*.whl > SHA256SUMS`를 다시 생성한다.
+
+인터넷을 사용하는 임시 복구에서는 3.2절의 requirements-inference.txt도 참고할 수 있지만, 범위 지정으로 원래보다 새 버전이 설치될 수 있다. 이러한 환경은 원본 버전과 대조·검증하기 전까지 동일 환경 복구로 보고하지 않는다.
+
+#### E. import → 실제 추론 → GUI 검증
+
+```bash
+python -m pip check
+python -c "import cv2, numpy, torch, torchvision, scipy, matplotlib, onnxruntime, tensorrt; print('imports OK'); print('torch:', torch.__version__, 'torchvision:', torchvision.__version__); print('ORT:', onnxruntime.__version__, onnxruntime.get_available_providers()); print('CUDA:', torch.cuda.is_available())"
+python -c "import tqdm, ftfy, regex, sklearn, tabulate, skimage, seaborn; from PIL import ImageTk; import tkinter; print('GUI/helper imports OK')"
+python -m pip freeze --local --all > "$MOSA_WHEEL_BACKUP/restored-environment-venv.txt"
+diff -u "$MOSA_WHEEL_BACKUP/environment-venv.txt" "$MOSA_WHEEL_BACKUP/restored-environment-venv.txt"
+```
+
+차이가 있으면 각 패키지와 설치 출처 차이를 확인한다. pip check와 import 성공만으로 전체 GUI 복구 완료로 간주하지 않는다.
+
+1. 백업한 Git 커밋의 소스, data.json, 사내 전처리 코드, 모델을 복원한다.
+2. 기존 저장 입력으로 onnx_probe.py 실제 추론을 실행하고 출력과 점수를 기준 결과와 비교한다.
+3. TensorRT 사용 시 엔진 호환성을 확인하고, 필요한 경우 대상 Jetson에서 재생성 후 비교한다.
+4. 7절의 실행 폴더에서 복구용 venv로 GUI를 열어 모델 선택·촬영·추론·CSV/이미지 저장을 확인한다.
+5. no_added_awb 조건의 일반 리셋과 USB 재연결 후 재측정을 각각 수행한다.
+6. 네트워크를 끊고 재부팅한 뒤에도 같은 작업이 완료되는지 확인한다.
+
+복구 완료 기록에는 사용한 백업 해시, OS/L4T·Python·GPU 라이브러리 버전, Git 커밋, 모델/엔진 해시, 설치 누락 및 보충 내역, 동일 입력 비교와 카메라 시험 결과를 남긴다. 현재 확인된 것은 **사용자의 백업 생성 완료 보고**이며 위 복구 시험 완료는 아니다.
 
 ## 4. GUI 포팅 범위 및 구조
 
@@ -265,6 +388,7 @@ L4T 업데이트 이후 카메라를 사용하지 않는 ONNX 단독 시험에�
 | 카메라/GUI 관련 로컬 테스트 | 40개 통과 기록 | 장치 재탐색/AWB 복구 변경 시 모의 테스트 |
 | 로그 실행기 테스트 | 3개 통과 기록 | 네이티브 출력 수집·필터·종료 코드 확인 |
 | 장시간 연속 운전·완전 오프라인 인수 | 추가 검증 필요 | 완료 보고 없음 |
+| wheel-backup 생성 | 사용자 완료 보고 | 백업 직접 검사·신규 환경 복구 시험은 미수행 |
 | 새 SD에서 전체 재설치 재현 | 추가 검증 필요 | 설치 이력·절차 정리와 별도 검증 |
 
 로컬 테스트 수는 각 변경 시 실행한 대상별 결과이며, Jetson 전체 시스템 인수 시험의 총 통과 건수로 합산하지 않는다.
@@ -274,7 +398,7 @@ L4T 업데이트 이후 카메라를 사용하지 않는 ONNX 단독 시험에�
 1. 동일 조명·시료·배율·거리에서 Windows/Jetson 각각 반복 RGB, RG gap, score 및 판정을 표로 기록한다.
 2. 일반 리셋, GUI 재실행, USB 전원 재연결을 구분해 동일한 영상 조건이 복구되는지 확인한다.
 3. 실제 업무 데이터로 임계값 주변 OK/NG 사례를 비교한다.
-4. SD 이미지·패키지·wheel·모델/엔진 해시·설정·Git 커밋을 고정하고 새 SD에서 재설치한다.
+4. 생성한 wheel-backup을 별도 매체에 보관하고 3.5절에 따라 누락 의존성을 보충한다. SD 이미지·시스템 패키지·모델/엔진 해시·설정·Git 커밋과 함께 새 SD 복구를 검증한다.
 5. 네트워크 차단 및 재부팅 후 모델 로드·촬영·추론·저장을 확인한다.
 6. 필요할 때 정량 성능과 장시간 운전을 측정한다. TensorRT 저정밀도 최적화는 현재 후순위다.
 
