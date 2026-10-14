@@ -99,9 +99,8 @@ def assess_frame(frame, config):
     import cv2
     if frame.shape[:2] != (1944, 2592):
         raise ValueError('test.py checks require a 2592x1944 frame')
-    # test.py reloads BMP as RGB, blurs full image, then samples its bottom 10 rows.
+    # Windows 261013 samples the bottom 10 RGB rows without a Gaussian blur.
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    rgb = cv2.GaussianBlur(rgb, (7, 7), 0)
     r, g, b, _ = cv2.mean(rgb[1934:1944, 0:2590])
     return assess_rgb_means(r, g, b, config)
 

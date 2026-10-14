@@ -45,6 +45,18 @@ class ConditionTests(unittest.TestCase):
         result = conditions.assess_rgb_means(100.9, 80.1, 0, config)
         self.assertEqual(result['reasons'], [])
 
+    def test_bottom_rows_are_sampled_without_blur(self):
+        import numpy as np
+        try:
+            import cv2
+        except ImportError:
+            self.skipTest('Needs OpenCV')
+        frame = np.zeros((1944, 2592, 3), np.uint8)
+        frame[1933, :, 2] = 255  # Outside the sample; blur would leak red into it.
+        result = conditions.assess_frame(frame, {'BRIGHT_min': 0, 'BRIGHT_max': 0, 'RG_gab': 0})
+        self.assertEqual(result['R'], 0)
+        self.assertEqual(result['reasons'], [])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -210,8 +210,8 @@ ExposureTime은 다음 문자열 중 하나다: `1/1000s`, `1/500s`, `1/250s`, `
 - [Windows 800 모드](WINDOWS_800_CHECK.md)의 설정 보존과 before/after/수동 재측정 비교 절차를 따른다. 새 메인과 scripts를 함께 갱신한다. 독립 카메라 진단 GUI는 기존 자동 재검사 방식을 유지한다.
 - 카메라 설정·검사기준은 다음 측정 시 다시 읽는다. backend·모델·엔진 경로·device/fps는 앱 재시작 후 적용한다.
 - `Data_log_flag: 1`일 때 CSV_path의 log.csv에 실제 실행 backend를 기록한다. 기존 로그는 backend 열을 추가하고 이전 행을 unknown으로 보존한다. CSV_path는 미리 존재하는 쓰기 가능한 Linux 폴더여야 한다.
-- Windows와 비교할 때 먼저 동일 BMP로 점수를 비교하고, 이후 고정 조명·시료·거리에서 카메라 설정을 조정한다. 이미지는 사내에서만 비교해도 된다.
-- VisualAD 점수 비율은 배포된 Windows 값인 0.005(상위 0.5%)로 고정했다. 사용자가 같은 BMP 결과 일치를 확인했다. 과거 어댑터의 0.01 설정으로 되돌리지 않는다.
+- Windows와 비교할 때 먼저 동일 PNG/BMP로 점수를 비교하고, 이후 고정 조명·시료·거리에서 카메라 설정을 조정한다. 이미지는 사내에서만 비교해도 된다. 촬영 원본은 PNG로 저장하며 파일 입력은 PNG 우선, BMP 대체 읽기를 지원한다. 새 `Camera_or_png_flag`와 기존 `Camera_or_BMP_flag` 모두 사용 가능하며 새 키가 우선한다.
+- Windows 261013 업데이트부터 일반 VisualAD 점수 비율은 사용자 전달값 0.00005(상위 0.005%, 336×336에서 6픽셀)다. `fused_anomaly_map` 출력 모델은 맵의 최댓값을 점수로 쓰며 label/mask는 0 초과 기준이다. GUI OK/NG는 사용자 threshold를 사용한다. 전처리 7×7 blur도 제거했으므로 이전 0.005에서 확인한 결과 일치와 구분하여 재검증한다. 세부 변경은 [포트 문서](MOSA_JETSON_PORT.md)를 참조한다.
 
 ## 9. ONNX 단독 검사
 

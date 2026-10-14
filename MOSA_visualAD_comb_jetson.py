@@ -859,7 +859,9 @@ class CameraGUI:
             self.sub_shift  = data["sub_shift"]
             self.sub_scale  = data["sub_scale"]
             self.Data_log_flag = data["Data_log_flag"]
-            self.Camera_or_BMP_flag = data["Camera_or_BMP_flag"]
+            # Accept the new Windows key while preserving existing Jetson configs.
+            self.Camera_or_png_flag = (data["Camera_or_png_flag"] if "Camera_or_png_flag" in data
+                                       else data["Camera_or_BMP_flag"])
             self.reset_flag_en = data["reset_flag_en"]
             self.AI_result_flag = data["AI_result_flag"]
             self.ExposureValue = data.get("ExposureValue")
@@ -1001,6 +1003,7 @@ class CameraGUI:
     def show_wait_status(self):
         """측정 중 Running 상태 표시"""
         self.result_container.config(bg="gray")
+        self.result_label.config(text="NG", bg="gray", font=("Arial", 80, "bold"))  # 여백 덮어쓰기
         self.result_label.config(text="Running", bg="gray", font=("Arial", 32, "bold"))
 
     # -----------------------------
@@ -1147,24 +1150,31 @@ class CameraGUI:
             #                  + frame_to_save_6.astype(np.float32) + frame_to_save_7.astype(np.float32) + frame_to_save_8.astype(np.float32) + frame_to_save_9.astype(np.float32) + frame_to_save_10.astype(np.float32)
             #                  ) / 10.0
 
-        filepath = os.path.join(self.save_dir, f"{name}.bmp")
+        self.load_json()
+        filepath = os.path.join(self.save_dir, f"{name}.png")
 
         # ✅ 동일 파일 존재 시 덮어쓰기 확인
-        if os.path.exists(filepath):
+        if self.Camera_or_png_flag == 1 and os.path.exists(filepath):
             overwrite = messagebox.askyesno(
                 "파일 덮어쓰기 확인",
-                f"이미 존재하는 파일입니다:\n\n{name}.bmp\n\n덮어쓰시겠습니까?"
+                f"이미 존재하는 파일입니다:\n\n{name}.png\n\n덮어쓰시겠습니까?"
             )
             if not overwrite:
                 return  # 저장 취소
+        elif self.Camera_or_png_flag != 1:
+            if not os.path.exists(filepath):
+                filepath = os.path.join(self.save_dir, f"{name}.bmp")
+                if not os.path.exists(filepath):
+                    messagebox.showwarning("경고", "bmp/png 파일이 모두 없습니다.")
+                    return
+            print("< Open file : ", filepath, " >")
 
         start = time.time()
         first_time = start
 
-        self.load_json()
         self.reset_flag = False
         self.camera_report = {'mode': 'file', 'exposure_readback': 'unavailable'}
-        if self.Camera_or_BMP_flag == 1:
+        if self.Camera_or_png_flag == 1:
             self._camera_recovery_started.clear()
             self._camera_future = self.camera.prepare_inference(
                 self.camera_settings, manual_retry=True,
@@ -1175,7 +1185,7 @@ class CameraGUI:
 
     def _process_measurement(self, name, filepath, first_time, frame_to_save=None):
         start = first_time
-        if self.Camera_or_BMP_flag == 1:
+        if self.Camera_or_png_flag == 1:
             if not cv2.imwrite(filepath, frame_to_save):
                 raise RuntimeError(f'Image write failed: {filepath}')
         # cv2.imwrite(filepath, frame_to_save)
@@ -1183,7 +1193,7 @@ class CameraGUI:
         now = datetime.datetime.now()
         date = f"{now.strftime('%Y-%m-%d, %H:%M:%S')}"
         self.last_save_label.config(
-            text=f"마지막 저장 파일:\n{name}.bmp\n{date}"
+            text=f"마지막 저장 파일:\n{os.path.basename(filepath)}\n{date}"
         )
 
         # ===========================================================================
@@ -1210,7 +1220,7 @@ class CameraGUI:
 
         image_np = np.array(frame_to_save)
 
-        image_np = cv2.GaussianBlur(image_np, (7, 7), 0)
+        # Windows 261013 removes the pre-inference 7x7 Gaussian blur.
         norm_imgo = cv2.normalize(image_np, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
         crop_wh = norm_imgo[r_s:r_e, c_s:c_e, :]
         # crop_wh = cv2.resize(crop_wh, (crop_wh.shape[1] // 2, crop_wh.shape[0] // 2))
@@ -1267,7 +1277,7 @@ class CameraGUI:
 
         # Keep the original image checks, but never infer after a failed check.
         if self.reset_flag:
-            if self.Camera_or_BMP_flag == 1 and self.reset_flag_en:
+            if self.Camera_or_png_flag == 1 and self.reset_flag_en:
                 self.reset_camera()
             else:
                 self._show_camera_failure('영상 조건 미달: 밝기/RG 값을 확인하세요.')
@@ -1487,7 +1497,7 @@ class CameraGUI:
                 csvfilepath,
                 ["Date", "Model", "File name", "NG/OK ", "anomaly score", "anomaly label", "threshold", "밝기값", "RG_diff",
                  "Reset", "AutoExposure", "ExposureValue", "Brightness", "BRIGHT_min", "BRIGHT_max", "RG_gab"],
-                [date, self.selected_model_name, f"{name}.bmp", result, str(pred_score), str(pred_label), self.user_threshold,
+                [date, self.selected_model_name, os.path.basename(filepath), result, str(pred_score), str(pred_label), self.user_threshold,
                  bright_sampling, RG_diff, self.reset_flag, AutoExposure, Exposure, Brightness,
                  self.BRIGHT_min, self.BRIGHT_max, self.RG_gab],
                 self.inferencer.backend_name)

@@ -1,5 +1,7 @@
 # Jetson 신규 셋업 및 MOSA 검사 GUI 포팅 결과
 
+> 이 보고서는 2026-09-21 기준의 이력이다. 2026-10-14 반영한 Windows 261013 변경(PNG 원본, TopK 0.00005, 전처리 blur 제거, fused 맵 출력)은 [최신 포트 문서](MOSA_JETSON_PORT.md)를 참조한다. 아래 TopK 0.005와 동일 BMP 결과 일치 기록은 이전 버전의 검증 결과다.
+
 - 작성일: 2026-09-21
 - 코드 기준: `0cdecc6` (본 문서 작성 직전 main)
 - 대상: Jetson Orin Nano Super / Dino-Lite AM7115MZT / MOSA VisualAD GUI

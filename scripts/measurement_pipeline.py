@@ -19,13 +19,12 @@ def load_adapter(path):
 
 
 def visible_preprocess(frame):
-    """Only the explicit test.py operations before its unavailable get_transform."""
+    """Windows 261013 image operations before the shared get_transform."""
     import cv2
     from PIL import Image
     if frame.shape != (1944, 2592, 3) or frame.dtype != np.uint8:
         raise ValueError('Expected uint8 2592x1944 BGR image')
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    rgb = cv2.GaussianBlur(rgb, (7, 7), 0)
     normalized = cv2.normalize(rgb, None, 0, 1, cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     crop = normalized[900:1100, 0:2590]
     crop = np.power(np.clip((crop - 0.3) / 0.7, 0, 1), 1.4)
@@ -80,7 +79,7 @@ def save_measurement(folder, frame, result, config, threshold, camera_report):
     import cv2
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=False)
-    if not cv2.imwrite(str(folder/'original.bmp'), frame):
+    if not cv2.imwrite(str(folder/'original.png'), frame):
         raise RuntimeError('Image save failed')
     np.savez(folder/'inputs.npz', **result['feed'])
     np.savez(folder/'outputs.npz', **result['outputs'])

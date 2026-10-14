@@ -11,7 +11,7 @@ from scipy.ndimage import gaussian_filter
 from measurement_pipeline import visible_preprocess
 
 LAYERS = (6, 12, 18, 24)
-DEFAULT_TOPK_RATIO = 0.005  # User's deployed Windows GUI; confirmed on the same BMP.
+DEFAULT_TOPK_RATIO = 0.00005  # Windows 261013 update: ceil(336 * 336 * ratio) = 6.
 MEAN = (0.48145466, 0.4578275, 0.40821073)
 STD = (0.26862954, 0.26130258, 0.27577711)
 
@@ -26,6 +26,19 @@ def preprocess(frame_bgr, config):
 
 
 def postprocess(outputs, threshold, config):
+    # New exports already fuse the anomaly map inside the model. Match the
+    # Windows 261013 max score and zero-based label/mask without another filter.
+    if outputs.get('fused_anomaly_map') is not None:
+        fused = np.asarray(outputs['fused_anomaly_map'])
+        amap = np.squeeze(fused)
+        if amap.shape != (336, 336) or fused.dtype != np.float32 or not np.isfinite(amap).all():
+            raise ValueError(f'fused_anomaly_map: expected finite float32 336x336 map, '
+                             f'got {fused.dtype} {fused.shape}')
+        amap = np.array(amap, copy=True)
+        score = float(amap.max())
+        return {'anomaly_map': amap, 'raw_anomaly_map': amap.copy(), 'pred_score': score,
+                'pred_mask': (amap > 0).astype(np.float32), 'pred_label': int(score > 0)}
+
     names = ['anomaly_features_enhanced', 'normal_features_enhanced'] + [
         f'patch_tokens_transformed_layer_{layer}' for layer in LAYERS]
     missing = set(names) - set(outputs)

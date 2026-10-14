@@ -25,7 +25,7 @@ python scripts/compare_visualad.py \
   --output artifacts/visualad-postprocess-01
 ```
 
-합산 raw map의 상위 0.5%(비율 0.005, ceil, 565개) 평균이 score다. 배포된 Windows GUI의 원래 값에 맞췄으며, 사용자가 같은 BMP 결과 일치를 확인했다. sigma=4 Gaussian은 그 이후 맵·마스크에만 적용한다. wrapper label/mask는 strict >, GUI의 NG는 >=를 유지한다. 출력은 맵·점수 오차, 양쪽 판정, 마스크 불일치 픽셀 수다. 0 입력 결과는 실행·수치 비교용이며 업무 판정 검증은 사내 실제 영상으로 한다.
+Windows 261013 업데이트부터 일반 VisualAD score는 합산 raw map의 상위 0.005%(사용자 전달 비율 0.00005, ceil, 6개) 평균이다. sigma=4 Gaussian은 그 이후 맵·마스크에만 적용한다. wrapper label/mask는 사용자 threshold에 대한 strict >, GUI의 NG는 >=를 유지한다. `fused_anomaly_map` 출력 모델은 필터 없이 맵 최댓값을 score로 사용하고 label/mask는 0 초과 기준이다. 출력은 맵·점수 오차, 양쪽 판정, 마스크 불일치 픽셀 수다. 이전 비율 0.005에서 확인한 동일 BMP 일치는 과거 검증이며 새 버전은 다시 비교한다. 0 입력 결과는 실행·수치 비교용이며 업무 판정 검증은 사내 실제 영상으로 한다.
 
 출처: [공식 scoring](https://github.com/7HHHHH/VisualAD/blob/main/utils/scoring.py), [공식 transforms](https://github.com/7HHHHH/VisualAD/blob/main/utils/transforms.py). 사용자 제공 wrapper의 계산 순서를 기준으로 구현했으며 아래의 과거 템플릿 연결 설명보다 이 절차를 우선한다.
 
@@ -38,7 +38,7 @@ python scripts/compare_visualad.py \
 ## 유지·변경 범위
 
 - 카메라: 기존 DLL/DirectShow 대신 DinoLiteCamera. 초기 설정과 추론 전 상태 검사, 조건 통과한 동일 프레임 전달.
-- 명시된 전처리: 원본 해상도, ROI, blur, 전체 min-max, gamma, 336 패딩 유지. 마지막 get_transform은 원본 구현이 필요하다.
+- 명시된 전처리: 원본 해상도, ROI, 전체 min-max, gamma, 336 패딩 유지. 7×7 blur는 Windows 261013 변경에 따라 제거했다. 마지막 get_transform은 원본 구현이 필요하다.
 - 판정: UI threshold -20~20을 /10, score < threshold이면 OK. 히트맵은 OpenCV로 표시하며 기존 Matplotlib 출력과 픽셀 단위 외관은 다르다.
 - 기존 실험용 5회 반복 대신 버튼당 1회. 시간 표시된 폴더에 저장해 덮어쓰기를 방지한다. CSV/column500 실험과 주석 처리된 Subspace 융합은 이 버전에 옮기지 않았다.
 - 파일 입력은 `--file-mode`. 카메라 검사를 수행했다고 표시하지 않는다.
@@ -80,7 +80,7 @@ python scripts/onnx_probe.py --model local/model.onnx --output artifacts/onnx-io
 python scripts/test_jetson.py --config local/measurement.json --file-mode
 ```
 
-실제 어댑터를 연결한 뒤 GUI에서 BMP, 저장 폴더, 이름을 선택하고 측정한다. 각 측정 폴더에 original.bmp, inputs.npz, outputs.npz, anomaly_map.npy, report.json, result.jpg가 저장된다. 파일 모드로 확인 후 --file-mode를 빼면 카메라로 실행한다.
+실제 어댑터를 연결한 뒤 GUI에서 PNG/BMP, 저장 폴더, 이름을 선택하고 측정한다. 각 측정 폴더에 original.png, inputs.npz, outputs.npz, anomaly_map.npy, report.json, result.jpg가 저장된다. 파일 모드로 확인 후 --file-mode를 빼면 카메라로 실행한다.
 
 저장한 텐서만으로 ONNX를 다시 실행할 수도 있다.
 

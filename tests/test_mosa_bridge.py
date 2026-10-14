@@ -29,6 +29,26 @@ class BridgeTests(unittest.TestCase):
             model.close()
             backend.__exit__.assert_called_once()
 
+    def test_fused_output_uses_one_inference_on_existing_backend(self):
+        from unittest.mock import MagicMock
+        for runtime in ({'backend': 'onnx'}, {'backend': 'tensorrt', 'engine': 'model.engine'}):
+            backend = MagicMock()
+            amap = np.zeros((1, 1, 336, 336), np.float32)
+            amap[0, 0, 3, 4] = 0.75
+            backend.infer.return_value = {'fused_anomaly_map': amap}
+            with patch.object(bridge, 'open_backend', return_value=backend) as opened:
+                model = bridge.MOSAInferencer('model.onnx', runtime)
+                for _ in range(2):
+                    visual_map, label, score, mask = model.infer(torch.zeros(3, 336, 336), 1)
+                    self.assertEqual(visual_map.shape, (336, 336))
+                    self.assertEqual((label, score), (1, 0.75))
+                    self.assertEqual(mask[3, 4], 1)
+                opened.assert_called_once()
+                backend.__enter__.assert_called_once()
+                self.assertEqual(backend.infer.call_count, 2)
+                model.close()
+                backend.__exit__.assert_called_once()
+
     def test_shared_data_comments_and_camera_defaults(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'data.json'

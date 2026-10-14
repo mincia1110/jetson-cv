@@ -102,8 +102,8 @@ def main():
             messagebox.showerror('입력 오류', str(exc))
             return
         path = filedialog.asksaveasfilename(
-            defaultextension='.bmp', filetypes=[('Bitmap', '*.bmp')],
-            initialfile=datetime.now().strftime('capture_%Y%m%d_%H%M%S.bmp'))
+            defaultextension='.png', filetypes=[('PNG', '*.png'), ('Bitmap', '*.bmp')],
+            initialfile=datetime.now().strftime('capture_%Y%m%d_%H%M%S.png'))
         if path:
             start(camera.prepare_inference(config), '촬영 완료', Path(path))
 

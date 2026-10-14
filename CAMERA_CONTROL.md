@@ -41,7 +41,7 @@ python scripts/camera_control_gui.py --device /dev/video0 --config local/camera_
 2. LED OFF → AE OFF → 지정한 수동 노출 명령 전송 → 초기 brightness 적용.
 3. brightness를 다시 조회해 목표값과 비교. 실패하면 측정 중단.
 4. 설정 반영용 프레임을 버리고 새 프레임 N장 취득. test.py처럼 `[900:1100, 0:2590]` ROI만 평균화하고 바깥은 첫 프레임 유지.
-5. RGB 변환·7×7 Gaussian blur 후 `[1934:1944, 0:2590]` 영역 검사. 기존 bright_b는 실제로 `int(R 평균)`이고 RG_diff는 `int(R 평균 - G 평균)`이다. 경계값은 합격이다.
+5. RGB 변환 후 `[1934:1944, 0:2590]` 영역 검사. Windows 261013 변경에 따라 7×7 Gaussian blur는 제거했다. 기존 bright_b는 실제로 `int(R 평균)`이고 RG_diff는 `int(R 평균 - G 평균)`이다. 경계값은 합격이다.
 6. 영상 조건이 벗어나고 reset_flag_en이 true이면 재연결 후 동일한 고정값으로 한 번만 재시도.
 7. 조건을 만족한 **검사 대상 프레임 자체**를 반환. 실패하면 frame=None으로 추론·이미지 저장을 차단.
 
