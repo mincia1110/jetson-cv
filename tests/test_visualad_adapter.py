@@ -14,23 +14,18 @@ except ImportError:
 
 @unittest.skipIf(torch is None, 'Needs torch scipy OpenCV')
 class VisualADTests(unittest.TestCase):
-    def test_matches_supplied_wrapper(self):
+    def test_token_path_uses_only_last_available_layer(self):
         from visualad_adapter import postprocess
         rng = np.random.default_rng(18)
         outputs = {name:rng.normal(size=(1,1024)).astype(np.float32) for name in
                    ('anomaly_features_enhanced','normal_features_enhanced')}
         for layer in (6,12,18,24):
             outputs[f'patch_tokens_transformed_layer_{layer}'] = rng.normal(size=(1,579,1024)).astype(np.float32)
-        # Reference transliteration of the supplied wrapper, including per-layer
-        # feature normalization and cosine_similarity's own normalization.
-        maps=[]
-        for layer in (6,12,18,24):
-            a=F.normalize(torch.from_numpy(outputs['anomaly_features_enhanced']),dim=1,eps=1e-8)
-            n=F.normalize(torch.from_numpy(outputs['normal_features_enhanced']),dim=1,eps=1e-8)
-            t=F.normalize(torch.from_numpy(outputs[f'patch_tokens_transformed_layer_{layer}'])[:,3:,:],dim=2,eps=1e-8)
-            v=torch.cosine_similarity(t,a.unsqueeze(1),dim=2)-torch.cosine_similarity(t,n.unsqueeze(1),dim=2)
-            maps.append(F.interpolate(torch.nan_to_num(v,nan=0.).reshape(1,1,24,24),size=(336,336),mode='bilinear',align_corners=False).squeeze(1))
-        raw=torch.stack(maps).sum(0)[0]
+        a=F.normalize(torch.from_numpy(outputs['anomaly_features_enhanced']),dim=1,eps=1e-8)
+        n=F.normalize(torch.from_numpy(outputs['normal_features_enhanced']),dim=1,eps=1e-8)
+        t=F.normalize(torch.from_numpy(outputs['patch_tokens_transformed_layer_24'])[:,3:,:],dim=2,eps=1e-8)
+        v=torch.cosine_similarity(t,a.unsqueeze(1),dim=2)-torch.cosine_similarity(t,n.unsqueeze(1),dim=2)
+        raw=F.interpolate(torch.nan_to_num(v,nan=0.).reshape(1,1,24,24),size=(336,336),mode='bilinear',align_corners=False)[0,0]
         score=torch.topk(raw.reshape(-1),6).values.mean().item()  # ceil(336*336*0.00005)
         result=postprocess(outputs,score,{})
         np.testing.assert_array_equal(result['anomaly_map'],gaussian_filter(raw.numpy(),sigma=4))
@@ -40,32 +35,39 @@ class VisualADTests(unittest.TestCase):
         for k in changed:
             if k.startswith('patch_'):
                 changed[k][:,:3,:]=10000
+                if not k.endswith('_24'):
+                    changed[k][:,3:,:]=-10000
         np.testing.assert_array_equal(result['anomaly_map'],postprocess(changed,score,{})['anomaly_map'])
-        del changed['patch_tokens_transformed_layer_24']
+        for k in tuple(changed):
+            if k.startswith('patch_'): del changed[k]
         with self.assertRaises(ValueError): postprocess(changed,score,{})
 
-    def test_fused_export_matches_windows_max_score_and_zero_mask(self):
+    def test_fused_export_uses_topk_before_gaussian_and_user_threshold(self):
         from visualad_adapter import postprocess
         amap = np.full((336, 336), -0.1, dtype=np.float32)
         amap[0, 0], amap[0, 1] = 0.8, 0
+        expected_score = float(torch.topk(torch.from_numpy(amap).flatten(), 6).values.mean())
         for shape in ((336, 336), (1, 336, 336), (1, 1, 336, 336)):
             outputs = {'fused_anomaly_map': amap.reshape(shape),
                        'fusion_weights': np.array([0.5, 0.5], dtype=np.float32)}
-            result = postprocess(outputs, 1.0, {})
-            np.testing.assert_array_equal(result['anomaly_map'], amap)
-            self.assertEqual(result['pred_score'], float(amap.max()))
-            self.assertEqual(result['pred_label'], 1)  # Windows uses zero, not GUI threshold.
-            np.testing.assert_array_equal(result['pred_mask'], (amap > 0).astype(np.float32))
+            result = postprocess(outputs, expected_score, {})
+            np.testing.assert_array_equal(result['raw_anomaly_map'], amap)
+            np.testing.assert_array_equal(result['anomaly_map'], gaussian_filter(amap, sigma=4))
+            self.assertEqual(result['pred_score'], expected_score)
+            self.assertLess(result['pred_score'], float(amap.max()))
+            self.assertFalse(result['pred_label'])
+            np.testing.assert_array_equal(result['pred_mask'], result['anomaly_map'] > expected_score)
             result['anomaly_map'][0, 0] = 5
             self.assertEqual(amap[0, 0], np.float32(0.8))
         result = postprocess({'fused_anomaly_map': np.zeros_like(amap)}, -1, {})
-        self.assertEqual(result['pred_label'], 0)
-        self.assertFalse(result['pred_mask'].any())
+        self.assertTrue(result['pred_label'])
+        self.assertTrue(result['pred_mask'].all())
 
     def test_invalid_fused_map_is_rejected(self):
         from visualad_adapter import postprocess
         for amap in (np.zeros((2, 336, 336), np.float32),
-                     np.zeros((336, 336), np.float64),
+                     np.zeros((0, 336), np.float32),
+                     np.zeros((336, 336), np.int32),
                      np.full((336, 336), np.nan, np.float32)):
             with self.assertRaisesRegex(ValueError, 'fused_anomaly_map'):
                 postprocess({'fused_anomaly_map': amap}, 0, {})

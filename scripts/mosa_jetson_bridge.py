@@ -94,6 +94,7 @@ class MOSAInferencer:
             if not config.get('engine'):
                 raise ValueError('Selected model has no TensorRT engine path')
         config.setdefault('backend', 'onnx')
+        config['prefer_fused_output'] = True  # Windows v03 low-host-memory path.
         self.backend_name = config['backend']
         self.backend = open_backend(config)
         self.backend.__enter__()

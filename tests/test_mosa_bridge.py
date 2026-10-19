@@ -41,9 +41,11 @@ class BridgeTests(unittest.TestCase):
                 for _ in range(2):
                     visual_map, label, score, mask = model.infer(torch.zeros(3, 336, 336), 1)
                     self.assertEqual(visual_map.shape, (336, 336))
-                    self.assertEqual((label, score), (1, 0.75))
-                    self.assertEqual(mask[3, 4], 1)
+                    self.assertFalse(label)
+                    self.assertEqual(score, 0.125)  # Top 6 mean before Gaussian.
+                    self.assertFalse(mask.any())
                 opened.assert_called_once()
+                self.assertTrue(opened.call_args.args[0]['prefer_fused_output'])
                 backend.__enter__.assert_called_once()
                 self.assertEqual(backend.infer.call_count, 2)
                 model.close()

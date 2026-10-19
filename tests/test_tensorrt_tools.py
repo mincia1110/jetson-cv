@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 import numpy as np
 
@@ -31,6 +32,30 @@ class ComparisonTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_visualad_copies_only_fused_map_from_device(self):
+        fused, unused = Mock(), Mock()
+        fused.numpy.return_value = np.ones((1, 1, 24, 24), np.float32)
+        session = TensorRTSession('unused.engine', prefer_fused_output=True)
+        session.runner = Mock()
+        session.runner.infer.return_value = {'unused_tokens': unused, 'fused_anomaly_map': fused}
+        result = session.infer({'input': np.zeros((1, 3, 336, 336), np.float32)})
+        self.assertEqual(set(result), {'fused_anomaly_map'})
+        self.assertFalse(session.runner.infer.call_args.kwargs['copy_outputs_to_host'])
+        fused.numpy.assert_called_once_with()
+        unused.numpy.assert_not_called()
+        fused.numpy.return_value[:] = 5
+        np.testing.assert_array_equal(result['fused_anomaly_map'], np.ones((1, 1, 24, 24), np.float32))
+
+    def test_visualad_without_fused_map_copies_all_token_outputs(self):
+        token = Mock()
+        token.numpy.return_value = np.zeros((1, 579, 1024), np.float32)
+        session = TensorRTSession('unused.engine', prefer_fused_output=True)
+        session.runner = Mock()
+        session.runner.infer.return_value = {'patch_tokens_transformed_layer_24': token}
+        result = session.infer({'input': np.zeros((1, 3, 336, 336), np.float32)})
+        self.assertEqual(set(result), {'patch_tokens_transformed_layer_24'})
+        token.numpy.assert_called_once_with()
+
     def test_output_owned_and_input_dtype_shape_preserved(self):
         class FakeRunner:
             output = np.ones(2)

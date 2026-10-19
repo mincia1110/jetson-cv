@@ -25,7 +25,7 @@ python scripts/compare_visualad.py \
   --output artifacts/visualad-postprocess-01
 ```
 
-Windows 261013 업데이트부터 일반 VisualAD score는 합산 raw map의 상위 0.005%(사용자 전달 비율 0.00005, ceil, 6개) 평균이다. sigma=4 Gaussian은 그 이후 맵·마스크에만 적용한다. wrapper label/mask는 사용자 threshold에 대한 strict >, GUI의 NG는 >=를 유지한다. `fused_anomaly_map` 출력 모델은 필터 없이 맵 최댓값을 score로 사용하고 label/mask는 0 초과 기준이다. 출력은 맵·점수 오차, 양쪽 판정, 마스크 불일치 픽셀 수다. 이전 비율 0.005에서 확인한 동일 BMP 일치는 과거 검증이며 새 버전은 다시 비교한다. 0 입력 결과는 실행·수치 비교용이며 업무 판정 검증은 사내 실제 영상으로 한다.
+Windows v03(2026-10-19 반영)부터 VisualAD score는 raw map의 상위 0.005%(비율 0.00005, ceil, 6개) 평균이다. fused 맵은 float32로 변환하고 필요시 336×336으로 bilinear 보간한다. 토큰 경로는 [6,12,18,24] 중 마지막 사용 가능 레이어 하나를 사용한다. sigma=4 Gaussian은 점수 계산 이후 표시 맵·마스크에 적용한다. 두 경로 모두 wrapper label/mask는 사용자 threshold에 대한 strict >, GUI의 NG는 >=를 유지한다. 이전 fused 최댓값·0 기준 판정과 네 레이어 합산은 현재 규칙이 아니다. 출력은 맵·점수 오차, 양쪽 판정, 마스크 불일치 픽셀 수다. 이전 버전에서 확인한 동일 BMP 일치는 과거 검증이며 새 버전은 다시 비교한다. 0 입력 결과는 실행·수치 비교용이며 업무 판정 검증은 사내 실제 영상으로 한다.
 
 출처: [공식 scoring](https://github.com/7HHHHH/VisualAD/blob/main/utils/scoring.py), [공식 transforms](https://github.com/7HHHHH/VisualAD/blob/main/utils/transforms.py). 사용자 제공 wrapper의 계산 순서를 기준으로 구현했으며 아래의 과거 템플릿 연결 설명보다 이 절차를 우선한다.
 

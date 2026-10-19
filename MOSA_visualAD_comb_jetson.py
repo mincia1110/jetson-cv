@@ -582,12 +582,10 @@ def camera_init():
 
 
 class CameraGUI:
-    def __init__(self, root, camera, microscope, inferencer, subspace_model, threshold_img, selected_model_name):
+    def __init__(self, root, camera, microscope, inferencer, selected_model_name):
         self.camera = camera
         self.microscope = microscope
         self.inferencer = inferencer
-        self.subspace_model = subspace_model
-        self.threshold_img = threshold_img
         self.selected_model_name = selected_model_name
         self.load_json()
         self.root = root
@@ -1199,14 +1197,6 @@ class CameraGUI:
         # ===========================================================================
         # ============================== 이미지 AI 분석 ===============================
         # ===========================================================================
-        visual_scores = []
-        subspace_scores = []
-        visual_maps = []
-        subspace_maps = []
-
-        fused_maps = []
-        fused_scores = []
-
         frame_to_save = Image.open(filepath).convert("RGB")
 
         r_s = V_s
@@ -1548,22 +1538,12 @@ if __name__ == "__main__":
 
     # 모델 로드
     inferencer = MOSAInferencer(model_path_vis, runtime)
-    subspace_config_path = model_path_sub
-    cache_dir_path = "./dinov2_cache"
-
-    subspace_model, threshold_img = None, None
-    # subspace_model, threshold_img = load_subspace_model(
-    # subspace_config_path,
-    # cache_dir=cache_dir_path,
-    # device="cpu"
-    # )
-
     # 메인 프로그램 실행
     root = tk.Tk()
     camera = None
     try:
         camera, microscope, error = camera_init()
-        app = CameraGUI(root, camera, microscope, inferencer, subspace_model, threshold_img, selected_model_name)
+        app = CameraGUI(root, camera, microscope, inferencer, selected_model_name)
         root.protocol("WM_DELETE_WINDOW", app.on_close)
         root.mainloop()
     finally:
