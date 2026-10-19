@@ -15,19 +15,24 @@ from unittest.mock import Mock, patch
 source = Path(__file__).resolve().parents[1] / 'MOSA_visualAD_comb_jetson.py'
 tree = ast.parse(source.read_text(encoding='utf-8'))
 gui = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'CameraGUI')
+camera_init = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'camera_init')
 namespace = {'json': json, 'messagebox': Mock(), 'os': os, 'time': time,
-             'datetime': datetime}
-exec(compile(ast.Module(body=[gui], type_ignores=[]), str(source), 'exec'), namespace)
+             'datetime': datetime, 'threading': threading}
+exec(compile(ast.Module(body=[camera_init, gui], type_ignores=[]), str(source), 'exec'), namespace)
 
 
 class CameraFlowTests(unittest.TestCase):
     def setUp(self):
         namespace['messagebox'].reset_mock()
+        namespace['messagebox'].askyesno.return_value = True
         self.app = namespace['CameraGUI'].__new__(namespace['CameraGUI'])
         self.app.running = True
         self.app._measurement_busy = True
         self.app._camera_future = Future()
         self.app._camera_recovery_started = threading.Event()
+        self.app.camera = None
+        self.app.capture_thread = None
+        self.app.current_frame = None
         for name in ('root', 'result_container', 'result_label', 'last_save_label',
                      'measure_button', 'name_entry', 'threshold_entry', 'folder_button'):
             setattr(self.app, name, Mock())
@@ -160,6 +165,195 @@ class CameraFlowTests(unittest.TestCase):
                             camera_config=lambda value: value):
                 self.app.load_json()
             self.assertEqual(self.app.Camera_or_png_flag, expected)
+
+    def test_file_camera_file_switch_waits_for_ready_and_reuses_camera_and_model(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.prepare_file_capture(folder, mode=1)
+            self.app._measurement_busy = False
+            self.app._camera_future = None
+            self.app.camera_settings = {'Camera_or_png_flag': 1}
+            self.app.inferencer = inferencer = Mock()
+            self.app._start_camera_preview = Mock()
+            camera = Mock()
+            camera.ready = Future()
+            captured = Future()
+            camera.prepare_inference.return_value = captured
+            create_camera = Mock(return_value=(camera, None, False))
+            with patch.dict(namespace, camera_init=create_camera):
+                self.app.capture_image()
+                args = self.app.root.after.call_args.args[2:]
+                self.assertTrue(self.app._measurement_busy)
+                self.app.capture_image()  # A second click cannot start another connection.
+                self.app._poll_camera_start(*args)
+                camera.prepare_inference.assert_not_called()
+                self.app._start_camera_preview.assert_not_called()
+
+                camera.ready.set_result({})
+                self.app._poll_camera_start(*args)
+                camera.prepare_inference.assert_called_once()
+                self.app._start_camera_preview.assert_called_once()
+                self.assertTrue(self.app._measurement_busy)
+
+                frame = object()
+                captured.set_result({'frame': frame, 'report': {'reset_performed': False}})
+                self.app._poll_camera(*args)
+                self.app._process_measurement.assert_called_once_with(*args, frame)
+                self.assertFalse(self.app._measurement_busy)
+
+                # The next click rereads the mode; file input does not use the camera.
+                Path(folder, 'sample.png').touch()
+                self.app.load_json.side_effect = lambda: setattr(self.app, 'Camera_or_png_flag', 0)
+                self.app.capture_image()
+                self.assertEqual(self.app._process_measurement.call_count, 2)
+                self.assertEqual(camera.prepare_inference.call_count, 1)
+
+                self.app.load_json.side_effect = lambda: setattr(self.app, 'Camera_or_png_flag', 1)
+                self.app.capture_image()
+                self.assertEqual(camera.prepare_inference.call_count, 2)
+                create_camera.assert_called_once_with(self.app.camera_settings, wait_ready=False)
+                self.assertIs(self.app.inferencer, inferencer)
+                camera.close.assert_not_called()
+
+    def test_failed_lazy_connection_allows_file_inference_and_connection_retry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.prepare_file_capture(folder, mode=1)
+            self.app._measurement_busy = False
+            self.app._camera_future = None
+            self.app.camera_settings = {'Camera_or_png_flag': 1}
+            self.app._start_camera_preview = Mock()
+            failed, retry = Mock(), Mock()
+            failed.ready, retry.ready = Future(), Future()
+            create_camera = Mock(side_effect=[(failed, None, False), (retry, None, False)])
+            with patch.dict(namespace, camera_init=create_camera):
+                self.app.capture_image()
+                args = self.app.root.after.call_args.args[2:]
+                failed.ready.set_exception(RuntimeError('device missing'))
+                self.app._poll_camera_start(*args)
+                failed.close.assert_called_once()
+                self.assertIsNone(self.app.camera)
+                self.assertIsNone(self.app._camera_future)
+                self.assertFalse(self.app._measurement_busy)
+                self.assertEqual(self.app.result_label.config.call_args.kwargs['text'], 'FAIL')
+                self.app._process_measurement.assert_not_called()
+                self.app._start_camera_preview.assert_not_called()
+
+                self.app.Camera_or_png_flag = 0
+                Path(folder, 'sample.png').touch()
+                self.app.capture_image()
+                self.app._process_measurement.assert_called_once()
+
+                self.app.Camera_or_png_flag = 1
+                self.app.capture_image()
+                self.assertIs(self.app.camera, retry)
+                self.assertIs(self.app._camera_future, retry.ready)
+                self.assertTrue(self.app._measurement_busy)
+
+    def test_completed_results_update_without_preview_and_file_mode_does_not_reset_camera(self):
+        self.app.Camera_or_png_flag = 0
+        self.app.reset_flag = False
+        self.app.reset_flag_en = True
+        for result, color in (('OK', 'green'), ('NG', 'red')):
+            self.app.measure(result, 180)
+            self.assertEqual(self.app.result_label.config.call_args.kwargs['text'], result)
+            self.assertEqual(self.app.result_container.config.call_args.kwargs['bg'], color)
+        self.app.root.after.assert_not_called()
+        self.app.Camera_or_png_flag = 1
+        self.app.measure('OK', 180)
+        self.assertEqual(self.app.result_label.config.call_args.kwargs['text'], 'OK')
+
+    def test_file_mode_close_without_camera_or_preview_releases_model(self):
+        self.app.inferencer = Mock()
+        self.app.on_close()
+        self.assertFalse(self.app.running)
+        self.app.inferencer.close.assert_called_once()
+        self.app.root.destroy.assert_called_once()
+
+    def test_close_during_lazy_connection_does_not_resume_measurement(self):
+        self.app.camera = Mock()
+        self.app.inferencer = Mock()
+        self.app.on_close()
+        self.app._poll_camera_start('sample', 'sample.png', 0)
+        self.app.camera.close.assert_called_once()
+        self.app.root.after.assert_not_called()
+        self.app._process_measurement.assert_not_called()
+
+
+class CameraStartupTests(unittest.TestCase):
+    def test_file_startup_never_constructs_camera_or_validates_device_settings(self):
+        for mode in ({'Camera_or_png_flag': 0}, {'Camera_or_BMP_flag': 0},
+                     {'Camera_or_png_flag': 0, 'Camera_or_BMP_flag': 1}):
+            with self.subTest(mode=mode), patch.dict(namespace,
+                    read_mosa_data=Mock(return_value=mode), MOSACamera=Mock(), camera_config=Mock()):
+                self.assertEqual(namespace['camera_init'](), (None, None, False))
+                namespace['MOSACamera'].assert_not_called()
+                namespace['camera_config'].assert_not_called()
+
+    def test_camera_startup_preserves_ready_wait_and_failed_startup_cleanup(self):
+        config = {'Camera_or_BMP_flag': 1, 'device': '/dev/video2', 'fps': 10}
+        camera = Mock()
+        with patch.dict(namespace, read_mosa_data=Mock(return_value=config),
+                        MOSACamera=Mock(return_value=camera), camera_config=lambda data: data):
+            self.assertEqual(namespace['camera_init'](), (camera, None, False))
+            camera.ready.result.assert_called_once()
+            namespace['MOSACamera'].assert_called_once_with(
+                device='/dev/video2', fps=10, initial_config=config)
+            camera.ready.result.side_effect = RuntimeError('device missing')
+            with self.assertRaisesRegex(RuntimeError, 'device missing'):
+                namespace['camera_init']()
+            camera.close.assert_called_once()
+
+    def test_lazy_startup_returns_pending_worker_without_waiting(self):
+        config = {'Camera_or_png_flag': 1}
+        camera = Mock()
+        camera.ready = Future()
+        with patch.dict(namespace, read_mosa_data=Mock(), MOSACamera=Mock(return_value=camera),
+                        camera_config=lambda data: data):
+            self.assertEqual(namespace['camera_init'](config, wait_ready=False), (camera, None, False))
+            self.assertFalse(camera.ready.done())
+            namespace['read_mosa_data'].assert_not_called()
+
+    def test_gui_starts_preview_only_when_camera_exists_and_only_once(self):
+        for camera in (None, Mock()):
+            with self.subTest(camera=camera), patch.dict(namespace,
+                    np=Mock(), torch=Mock(), tk=Mock(), ttk=Mock(), threading=Mock()), \
+                    patch.object(namespace['CameraGUI'], 'load_json',
+                                 lambda app: setattr(app, 'init_threshold', 0)), \
+                    patch.object(namespace['CameraGUI'], '_update_label'), \
+                    patch.object(namespace['CameraGUI'], 'update_gui') as update:
+                app = namespace['CameraGUI'](Mock(), camera, None, Mock(), 'Model A')
+                if camera is None:
+                    namespace['threading'].Thread.assert_not_called()
+                    update.assert_not_called()
+                    self.assertIsNone(app.capture_thread)
+                    app.video_label.config.assert_called_with(text='파일 추론 모드 (PNG/BMP)')
+                    app.camera = Mock()  # A later successful connection can start preview.
+                app._start_camera_preview()
+                app._start_camera_preview()
+                namespace['threading'].Thread.assert_called_once()
+                app.capture_thread.start.assert_called_once()
+                update.assert_called_once()
+
+    def test_main_finally_closes_camera_connected_after_file_mode_start(self):
+        main = next(node for node in tree.body if isinstance(node, ast.If)
+                    and ast.unparse(node.test) == "__name__ == '__main__'")
+        root, app, camera, inferencer = Mock(), Mock(), Mock(), Mock()
+        app.camera = None
+
+        def close_mainloop():
+            app.camera = camera
+            raise RuntimeError('mainloop stopped')
+
+        root.mainloop.side_effect = close_mainloop
+        values = {'__name__': '__main__', 'print': Mock(), 'tk': Mock(Tk=Mock(return_value=root)),
+                  'show_model_selection_gui': Mock(return_value=('Model A', 'model.onnx', None, {})),
+                  'MOSAInferencer': Mock(return_value=inferencer),
+                  'camera_init': Mock(return_value=(None, None, False)),
+                  'CameraGUI': Mock(return_value=app)}
+        with self.assertRaisesRegex(RuntimeError, 'mainloop stopped'):
+            exec(compile(ast.Module(body=[main], type_ignores=[]), str(source), 'exec'), values)
+        self.assertFalse(app.running)
+        camera.close.assert_called_once()
+        inferencer.close.assert_called_once()
 
 
 if __name__ == '__main__':

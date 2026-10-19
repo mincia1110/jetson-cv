@@ -569,15 +569,20 @@ img_size_w = 448
 # -----------------------------
 # 카메라 초기화
 # -----------------------------`
-def camera_init():
-    runtime = read_mosa_data()
+def camera_init(config=None, *, wait_ready=True):
+    runtime = read_mosa_data() if config is None else config
+    mode = (runtime['Camera_or_png_flag'] if 'Camera_or_png_flag' in runtime
+            else runtime['Camera_or_BMP_flag'])
+    if mode != 1:
+        return None, None, False
     camera = MOSACamera(device=runtime.get('device', '/dev/video0'),
-                        fps=runtime.get('fps', 10), initial_config=read_camera_settings())
-    try:
-        camera.ready.result()
-    except Exception:
-        camera.close()
-        raise
+                        fps=runtime.get('fps', 10), initial_config=camera_config(runtime))
+    if wait_ready:
+        try:
+            camera.ready.result()
+        except Exception:
+            camera.close()
+            raise
     return camera, None, False
 
 
@@ -601,6 +606,7 @@ class CameraGUI:
         self._measurement_busy = False
         self._camera_future = None
         self._camera_recovery_started = threading.Event()
+        self.capture_thread = None
 
         # -----------------------------
         # Inference with gathered data
@@ -824,20 +830,16 @@ class CameraGUI:
         # -----------------------------
         # 캡처 스레드 시작
         # -----------------------------
-        self.capture_thread = threading.Thread(
-            target=self.camera_capture_loop,
-            daemon=True
-        )
-        self.capture_thread.start()
+        if self.camera is None:
+            self.video_label.config(text='파일 추론 모드 (PNG/BMP)')
+        else:
+            self._start_camera_preview()
 
         try:
             import pyi_splash
             pyi_splash.close()
         except:
             pass
-
-        # GUI 업데이트
-        self.update_gui()
 
         # ret, frame = self.camera.read()
         # bright_sampling = cv2.mean(frame[1944-10:1944, 0:2590 , :])
@@ -882,7 +884,7 @@ class CameraGUI:
             sys.exit(1)
 
     def reset_camera(self):
-        if self._camera_future is not None:
+        if self.camera is None or self._camera_future is not None:
             return
         self._set_measurement_busy(True)
         self._show_reset_wait()
@@ -922,6 +924,54 @@ class CameraGUI:
         self._measurement_busy = busy
         for widget in (self.measure_button, self.name_entry, self.threshold_entry, self.folder_button):
             widget.config(state='disabled' if busy else 'normal')
+
+    def _start_camera_preview(self):
+        if self.capture_thread is not None:
+            return
+        self.video_label.config(text='')
+        self.capture_thread = threading.Thread(target=self.camera_capture_loop, daemon=True)
+        self.capture_thread.start()
+        self.update_gui()
+
+    def _start_camera_measurement(self, name, filepath, first_time):
+        if self.camera is None:
+            # The worker owns device initialization; Tk polls readiness without
+            # blocking or constructing another inference session.
+            self.camera, self.microscope, _ = camera_init(self.camera_settings, wait_ready=False)
+            self._camera_future = self.camera.ready
+            self.last_save_label.config(text='카메라 연결 및 초기화 중입니다.')
+            self.root.after(50, self._poll_camera_start, name, filepath, first_time)
+            return
+        self._camera_recovery_started.clear()
+        self._camera_future = self.camera.prepare_inference(
+            self.camera_settings, manual_retry=True,
+            on_recovery=self._camera_recovery_started.set)
+        self.root.after(50, self._poll_camera, name, filepath, first_time)
+
+    def _poll_camera_start(self, name, filepath, first_time):
+        if not self.running:
+            return
+        if not self._camera_future.done():
+            self.root.after(50, self._poll_camera_start, name, filepath, first_time)
+            return
+        try:
+            self._camera_future.result()
+        except Exception as exc:
+            self.camera.close()
+            self.camera = None
+            self._camera_future = None
+            self._show_camera_failure(f'카메라 연결 실패: {exc}')
+            self._set_measurement_busy(False)
+            return
+        self._camera_future = None
+        try:
+            self._start_camera_preview()
+            self._start_camera_measurement(name, filepath, first_time)
+        except Exception as exc:
+            self._show_camera_failure(str(exc))
+        finally:
+            if self._camera_future is None:
+                self._set_measurement_busy(False)
 
     def camera_capture_loop(self):
         while self.running:
@@ -979,10 +1029,9 @@ class CameraGUI:
     # 측정 버튼 로직
     # ---------------------
     def measure(self, result, bright_b):
-        if self.current_frame is None:
-            return
-
-        if self.reset_flag == True and self.reset_flag_en == True:
+        # A completed measurement already passed input checks. Its result must
+        # not depend on whether a live preview frame is available.
+        if self.Camera_or_png_flag == 1 and self.reset_flag == True and self.reset_flag_en == True:
             self.root.after(500, self.reset_camera)
             self.result_container.config(bg="blue")
             self.result_label.config(text="FAIL\n(WAIT)", bg="blue", font=("Arial", 35, "bold"))
@@ -1173,11 +1222,7 @@ class CameraGUI:
         self.reset_flag = False
         self.camera_report = {'mode': 'file', 'exposure_readback': 'unavailable'}
         if self.Camera_or_png_flag == 1:
-            self._camera_recovery_started.clear()
-            self._camera_future = self.camera.prepare_inference(
-                self.camera_settings, manual_retry=True,
-                on_recovery=self._camera_recovery_started.set)
-            self.root.after(50, self._poll_camera, name, filepath, first_time)
+            self._start_camera_measurement(name, filepath, first_time)
             return
         self._process_measurement(name, filepath, first_time)
 
@@ -1504,8 +1549,10 @@ class CameraGUI:
     def on_close(self):
         self.running = False
         time.sleep(0.05)
-        self.capture_thread.join(timeout=1)
-        self.camera.close()
+        if self.capture_thread is not None:
+            self.capture_thread.join(timeout=1)
+        if self.camera is not None:
+            self.camera.close()
         self.inferencer.close()
         self.root.destroy()
 
@@ -1541,12 +1588,17 @@ if __name__ == "__main__":
     # 메인 프로그램 실행
     root = tk.Tk()
     camera = None
+    app = None
     try:
         camera, microscope, error = camera_init()
         app = CameraGUI(root, camera, microscope, inferencer, selected_model_name)
         root.protocol("WM_DELETE_WINDOW", app.on_close)
         root.mainloop()
     finally:
-        if camera is not None:
-            camera.close()
+        # A file-mode start may acquire a camera later inside the GUI.
+        if app is not None:
+            app.running = False
+        active_camera = app.camera if app is not None else camera
+        if active_camera is not None:
+            active_camera.close()
         inferencer.close()
