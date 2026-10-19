@@ -37,6 +37,17 @@
 
 검증(2026-10-19): `/tmp/jetson-cv-v03-check/bin/python -B -m unittest discover -s tests -v`에서 **90개 통과, skip 없음**. 파일 모드의 무카메라 시작, 비동기 연결 대기·실패·재시도, 파일↔촬영 전환과 모델 재사용, OK/NG 표시, 연결 대기 중 종료와 최종 정리를 mock으로 확인했다. 실제 Jetson의 카메라·GUI·CUDA 동작은 별도 확인이 필요하다.
 
+## 표시 이미지 생성의 불필요한 작업 정리
+
+- 히트맵은 기존 Matplotlib 설정과 PNG 픽셀을 유지하며 `BytesIO`에서 OpenCV로 전달한다. 저장 폴더에 임시 `{name}_heatmap.png`를 쓰고 다시 읽어 삭제하는 왕복이 없어졌다. 즉시 읽고 버리는 메모리 중간 PNG는 무압축 PNG로 만들어 압축 연산도 생략한다. 원본 PNG, 최종 `{name}_resulf.jpg` 및 CSV 저장 방식은 유지한다.
+- 이미 만든 336×336 RGB 이미지를 재사용하고 중복 resize·PIL 변환·NumPy 복사를 제거했다. 색상 범위, 투명도, tight bbox, 크롭과 최종 표시 크기는 유지한다.
+- score < threshold인 OK에서는 최종적으로 사용하지 않던 윤곽선 탐색·색칠·확대를 생략한다. NG와 score == threshold의 윤곽선 처리 및 map >= threshold 기준은 유지한다.
+- 전처리·모델 실행·점수·판정·카메라 동작, `AI_result_flag`의 추가 결과창과 최종 GUI·로그 처리 순서는 유지한다. 새 설정이나 의존성은 없다.
+
+`tests/fixtures/mosa_rendering_2203676.py`에 변경 전 커밋의 렌더링 구간을 AST로 추출해 독립 비교 기준으로 보관했다. GUI 이미지 3개와 추가 결과창의 입력 RGB, 최종 합성 JPG 바이트를 OK/NG/동일 threshold·여러 맵·크롭 위치에서 비교하고 DPI·배경색·투명 PNG 설정도 확인한다. 실제 Jetson의 시간 절감량은 장치에서 별도로 측정한다.
+
+검증(2026-10-19): `MPLCONFIGDIR=/tmp/jetson-cv-v03-mpl-cache /tmp/jetson-cv-v03-check/bin/python -B -m unittest discover -s tests -v`에서 **96개 통과, skip 없음**. 렌더링 픽셀·JPG 비교는 27개 맵/점수/크롭 조합과 별도 스타일 조건을 포함한다. `git diff --check` 통과. Mac CPU/Agg·로컬 임시 저장소에서 이전/이후를 번갈아 31회씩 실행한 렌더링 구간 중앙값은 OK 24.390→16.495ms, NG 24.214→17.748ms였다. 이 수치는 Jetson이나 전체 처리시간의 가속률을 뜻하지 않는다.
+
 ## 2026-10-14 Windows 261013 업데이트 반영
 
 비교 기준은 첨부 `MOSA_visualAD_comb_261013.py`와 기존 Jetson 메인이다. 이전 Windows 원본 전체가 없으므로 Windows 버전 사이의 완전한 변경 이력은 아니다.

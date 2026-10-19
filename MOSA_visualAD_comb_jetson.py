@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 import datetime
+import io
 import os
 import threading
 import time
@@ -1404,10 +1405,8 @@ class CameraGUI:
         print("- Time(image 1) : ", datetime.timedelta(seconds=sec))
 
         # --------------------[결과창 : Heatmap]-------------------------
-        ref_image = cv2.resize(black_image, (336, 336))
-        vimg = Image.fromarray((ref_image * 255).astype(np.uint8))
-
-        print('vimg : ', ref_image.shape)
+        # The 336-square image was already converted above for image 1.
+        print('vimg : ', black_image.shape)
         print('visual_map : ', visual_map.shape)
 
         plt.close('all')
@@ -1415,11 +1414,15 @@ class CameraGUI:
         #plt.imshow(fused_map, interpolation="none", alpha=0.5, cmap="jet")
         plt.imshow(visual_map, interpolation="none", alpha=0.5, cmap="jet")
         plt.axis('off')
-        filepath_tmp = os.path.join(self.save_dir, f"{name}_heatmap.png")
-        plt.savefig(filepath_tmp, bbox_inches='tight', pad_inches=0)
-        img_show3 = cv2.imread(filepath_tmp)
-        os.remove(filepath_tmp)
-        img_show3 = np.array(img_show3)
+        # Preserve PNG pixels and the tight bounding box. This intermediate
+        # image needs neither disk I/O nor compression before immediate decode.
+        with io.BytesIO() as heatmap_png:
+            plt.savefig(heatmap_png, format='png', bbox_inches='tight', pad_inches=0,
+                        pil_kwargs={'compress_level': 0})
+            img_show3 = cv2.imdecode(np.frombuffer(heatmap_png.getvalue(), dtype=np.uint8),
+                                   cv2.IMREAD_COLOR)
+        if img_show3 is None:
+            raise RuntimeError('Heatmap PNG decode failed')
         img_show3 = cv2.resize(img_show3, (img_size_w, img_size_h))
         h = img_show3.shape[0]
         start_row = h // 2 - h // 8 + int(h * self.crop_v_offset)
@@ -1429,46 +1432,26 @@ class CameraGUI:
         img_show3 = cv2.resize(img_show3, (1000, 200))
 
         # --------------------[결과창 : contour]-------------------------
-        threshold_dec = self.user_threshold
-        #all_amap = fused_map.squeeze().cpu().numpy()
-        all_amap = visual_map.squeeze()
-        binary_mask = (all_amap >= threshold_dec).astype(np.uint8) * 255
-        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contour_overlay = img_tmp1.copy()
-        fill_color = np.array([255, 0, 0], dtype=np.uint8)  # 빨강 (RGB)
-        alpha = 0.3  # 투명도: 작을수록 더 투명함
-
-        fill_layer = contour_overlay.copy()
-        cv2.drawContours(fill_layer, contours, -1, tuple(fill_color.tolist()), thickness=cv2.FILLED)
-        contour_overlay = cv2.addWeighted(fill_layer, alpha, contour_overlay, 1 - alpha, 0)
-        cv2.drawContours(contour_overlay, contours, -1, (255, 0, 0), thickness=1)  # 얇은 빨강선
-
-        # if pred_score >= self.user_threshold:
-        #     print("==========NG===========")
-        #     print(pred_score)
-        #     print(self.user_threshold)
-        #     fig_contour = plt.figure(figsize=(4, 4))
-        #     plt.imshow(contour_overlay)
-        #     plt.axis('off')
-        #     plt.tight_layout()
-        #     plt.close(fig_contour)
-        # else:
-        #     print("==========OK===========")
-        #     print(pred_score)
-        #     print(self.user_threshold)
-        #     fig_contour = plt.figure(figsize=(4, 4))
-        #     plt.imshow(img_tmp1)
-        #     plt.axis('off')
-        #     plt.tight_layout()
-
-        img_show2 = contour_overlay
-        img_show2 = cv2.resize(img_show2, (img_size_w, img_size_h))
-        img_show2 = img_show2[start_row:end_row, :]
-        img_show2 = cv2.cvtColor(img_show2, cv2.COLOR_RGB2BGR)
-        img_show2 = cv2.resize(img_show2, (1000, 200))
-
         if pred_score < self.user_threshold:
             img_show2 = img_show1
+        else:
+            threshold_dec = self.user_threshold
+            all_amap = visual_map.squeeze()
+            binary_mask = (all_amap >= threshold_dec).astype(np.uint8) * 255
+            contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contour_overlay = img_tmp1.copy()
+            fill_color = np.array([255, 0, 0], dtype=np.uint8)  # 빨강 (RGB)
+            alpha = 0.3
+
+            fill_layer = contour_overlay.copy()
+            cv2.drawContours(fill_layer, contours, -1, tuple(fill_color.tolist()), thickness=cv2.FILLED)
+            contour_overlay = cv2.addWeighted(fill_layer, alpha, contour_overlay, 1 - alpha, 0)
+            cv2.drawContours(contour_overlay, contours, -1, (255, 0, 0), thickness=1)
+
+            img_show2 = cv2.resize(contour_overlay, (img_size_w, img_size_h))
+            img_show2 = img_show2[start_row:end_row, :]
+            img_show2 = cv2.cvtColor(img_show2, cv2.COLOR_RGB2BGR)
+            img_show2 = cv2.resize(img_show2, (1000, 200))
 
         end = time.time()
         sec = end - start
