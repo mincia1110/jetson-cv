@@ -58,7 +58,7 @@ from utils.transforms import get_transform
 # Jetson bridge lives beside this main in scripts/.
 BRIDGE_DIR = Path(__file__).resolve().parent / 'scripts'
 sys.path.insert(0, str(BRIDGE_DIR))
-from mosa_jetson_bridge import MOSACamera, MOSAInferencer, append_measurement_log, camera_config, model_runtime, read_mosa_data, user_th_inference
+from mosa_jetson_bridge import MOSACamera, MOSAInferencer, MeasurementLog, camera_config, model_runtime, read_mosa_data, user_th_inference
 def show_config_error(exc):
     detail = (f"설정 파일: {Path('data.json').resolve()}\n"
               f"{type(exc).__name__}: {exc}")
@@ -593,6 +593,7 @@ class CameraGUI:
         self.microscope = microscope
         self.inferencer = inferencer
         self.selected_model_name = selected_model_name
+        self.measurement_log = MeasurementLog()
         self.load_json()
         self.root = root
         self.root.title("MOSA Measurement (NDC Task)")
@@ -877,12 +878,13 @@ class CameraGUI:
             self.RG_gab = settings['RG_gab']
             self.reset_flag_en = settings['reset_flag_en']
             self.capture_no = settings['capture_no']
-            return False  # The worker checks the requested settings at each capture.
-
-
         except Exception as exc:
             show_config_error(exc)
             sys.exit(1)
+
+        if self.Data_log_flag != 1:
+            self.measurement_log.close()
+        return False  # The worker checks the requested settings at each capture.
 
     def reset_camera(self):
         if self.camera is None or self._camera_future is not None:
@@ -1511,7 +1513,7 @@ class CameraGUI:
             Exposure = self.ExposureTime + ' requested; readback unavailable'
             Brightness = self.camera_report.get('after') or self.camera_report.get('before', {})
             Brightness = Brightness.get('brightness_control', 'unavailable')
-            append_measurement_log(
+            self.measurement_log.append(
                 csvfilepath,
                 ["Date", "Model", "File name", "NG/OK ", "anomaly score", "anomaly label", "threshold", "밝기값", "RG_diff",
                  "Reset", "AutoExposure", "ExposureValue", "Brightness", "BRIGHT_min", "BRIGHT_max", "RG_gab"],
@@ -1536,8 +1538,15 @@ class CameraGUI:
             self.capture_thread.join(timeout=1)
         if self.camera is not None:
             self.camera.close()
-        self.inferencer.close()
-        self.root.destroy()
+        try:
+            self.measurement_log.close()
+        except OSError as exc:
+            messagebox.showerror('로그 파일 종료 실패', str(exc))
+        finally:
+            try:
+                self.inferencer.close()
+            finally:
+                self.root.destroy()
 
 
 # -----------------------------
@@ -1582,6 +1591,12 @@ if __name__ == "__main__":
         if app is not None:
             app.running = False
         active_camera = app.camera if app is not None else camera
-        if active_camera is not None:
-            active_camera.close()
-        inferencer.close()
+        try:
+            if active_camera is not None:
+                active_camera.close()
+        finally:
+            try:
+                if app is not None:
+                    app.measurement_log.close()
+            finally:
+                inferencer.close()

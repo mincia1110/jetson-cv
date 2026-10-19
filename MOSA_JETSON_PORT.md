@@ -48,6 +48,18 @@
 
 검증(2026-10-19): `MPLCONFIGDIR=/tmp/jetson-cv-v03-mpl-cache /tmp/jetson-cv-v03-check/bin/python -B -m unittest discover -s tests -v`에서 **96개 통과, skip 없음**. 렌더링 픽셀·JPG 비교는 27개 맵/점수/크롭 조합과 별도 스타일 조건을 포함한다. `git diff --check` 통과. Mac CPU/Agg·로컬 임시 저장소에서 이전/이후를 번갈아 31회씩 실행한 렌더링 구간 중앙값은 OK 24.390→16.495ms, NG 24.214→17.748ms였다. 이 수치는 Jetson이나 전체 처리시간의 가속률을 뜻하지 않는다.
 
+## USB CSV 로그의 반복 접근 줄이기
+
+`CSV_path`의 `log.csv`를 GUI가 처음 기록할 때 열고 재사용한다. 같은 파일에 이어 쓸 때는 존재·크기 조회, 헤더 읽기와 파일 열기·닫기를 반복하지 않는다. 매 측정의 한 행은 즉시 추가하고 `flush()`하며, CSV 열·인코딩·줄바꿈과 구형 로그의 `backend=unknown` 변환은 유지한다. USB에 직접 저장하며 새 설정 키는 없다.
+
+- `CSV_path`가 바뀌면 다음 로그 기록에서 기존 파일을 닫고 새 파일을 검증한 뒤 연다. `Data_log_flag=0`은 다음 측정의 설정 읽기에서 파일을 닫는다. GUI 정상 종료와 메인 종료 정리에서도 닫는다.
+- 쓰기·flush 오류는 기존 측정 오류 창으로 알리고 열린 파일을 정리한다. 다음 측정에서는 파일을 다시 검증한다. 실패한 행은 일부 기록됐을 수 있으므로 자동으로 다시 추가하지 않는다.
+- `flush()`는 Python 버퍼를 운영체제에 전달한다. 기존처럼 `fsync()`는 호출하지 않으며 물리 장치 기록 완료를 보장하지 않는다. USB 자체의 쓰기·동기화 지연은 남을 수 있다.
+
+파일을 열어 둔 동안 같은 CSV를 외부에서 교체·삭제하는 것은 감시하지 않는다. USB 제거나 CSV 교체 전에는 GUI를 종료하거나 로그를 끄고 다음 측정으로 적용해 파일을 닫는다. 교체 파일은 `MOSA_visualAD_comb_jetson.py`와 `scripts/mosa_jetson_bridge.py`다. 모델·전후처리·판정·이미지 저장은 바꾸지 않았다.
+
+검증(2026-10-19): `MPLCONFIGDIR=/tmp/jetson-cv-v03-mpl-cache /tmp/jetson-cv-v03-check/bin/python -B -m unittest discover -s tests -v`에서 **110개 통과, skip 없음**. CSV 바이트와 매 행 가시성, 연속 기록 시 파일 재접근 생략, 구형 로그 변환, 경로 전환, 로그 재활성화, USB 열기·쓰기·flush·종료 오류와 GUI 종료 정리를 확인했다. 이전 커밋과 AST 비교에서 측정 파이프라인은 CSV 호출 대상 외에 동일했다. `git diff --check` 통과. 실제 USB에서의 전체 시간 감소량은 장치 로그로 확인한다.
+
 ## 2026-10-14 Windows 261013 업데이트 반영
 
 비교 기준은 첨부 `MOSA_visualAD_comb_261013.py`와 기존 Jetson 메인이다. 이전 Windows 원본 전체가 없으므로 Windows 버전 사이의 완전한 변경 이력은 아니다.

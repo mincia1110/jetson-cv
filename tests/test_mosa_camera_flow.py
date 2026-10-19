@@ -33,6 +33,7 @@ class CameraFlowTests(unittest.TestCase):
         self.app.camera = None
         self.app.capture_thread = None
         self.app.current_frame = None
+        self.app.measurement_log = Mock()
         for name in ('root', 'result_container', 'result_label', 'last_save_label',
                      'measure_button', 'name_entry', 'threshold_entry', 'folder_button'):
             setattr(self.app, name, Mock())
@@ -265,8 +266,32 @@ class CameraFlowTests(unittest.TestCase):
         self.app.inferencer = Mock()
         self.app.on_close()
         self.assertFalse(self.app.running)
+        self.app.measurement_log.close.assert_called_once()
         self.app.inferencer.close.assert_called_once()
         self.app.root.destroy.assert_called_once()
+
+    def test_log_close_error_still_releases_model_and_destroys_gui(self):
+        self.app.inferencer = Mock()
+        self.app.measurement_log.close.side_effect = OSError('USB disconnected')
+        self.app.on_close()
+        self.app.inferencer.close.assert_called_once()
+        self.app.root.destroy.assert_called_once()
+        self.assertIn('USB disconnected', namespace['messagebox'].showerror.call_args.args[1])
+
+    def test_disabling_log_closes_writer_and_close_error_is_not_a_config_exit(self):
+        data = dict(CSV_path='logs', BRIGHT_min=0, BRIGHT_max=255, RG_gab=18,
+                    crop_v_offset=0, threshold=0, sub_shift=0, sub_scale=1,
+                    Data_log_flag=1, reset_flag_en=False, AI_result_flag=0,
+                    Brightness=16, capture_no=1, ExposureTime='1/8s', Camera_or_png_flag=0)
+        with patch.dict(namespace, read_mosa_data=lambda: dict(data), camera_config=lambda value: value):
+            self.app.load_json()
+            self.app.measurement_log.close.assert_not_called()
+            data['Data_log_flag'] = 0
+            self.app.load_json()
+            self.app.measurement_log.close.assert_called_once()
+            self.app.measurement_log.close.side_effect = OSError('USB disconnected')
+            with self.assertRaisesRegex(OSError, 'USB disconnected'):
+                self.app.load_json()
 
     def test_close_during_lazy_connection_does_not_resume_measurement(self):
         self.app.camera = Mock()
@@ -315,7 +340,8 @@ class CameraStartupTests(unittest.TestCase):
     def test_gui_starts_preview_only_when_camera_exists_and_only_once(self):
         for camera in (None, Mock()):
             with self.subTest(camera=camera), patch.dict(namespace,
-                    np=Mock(), torch=Mock(), tk=Mock(), ttk=Mock(), threading=Mock()), \
+                    np=Mock(), torch=Mock(), tk=Mock(), ttk=Mock(), threading=Mock(),
+                    MeasurementLog=Mock()), \
                     patch.object(namespace['CameraGUI'], 'load_json',
                                  lambda app: setattr(app, 'init_threshold', 0)), \
                     patch.object(namespace['CameraGUI'], '_update_label'), \
@@ -353,6 +379,7 @@ class CameraStartupTests(unittest.TestCase):
             exec(compile(ast.Module(body=[main], type_ignores=[]), str(source), 'exec'), values)
         self.assertFalse(app.running)
         camera.close.assert_called_once()
+        app.measurement_log.close.assert_called_once()
         inferencer.close.assert_called_once()
 
 

@@ -52,9 +52,8 @@ def model_runtime(data, slot):
     return config
 
 
-def append_measurement_log(path, header, row, backend):
-    """Add backend column; preserve legacy rows with unknown historical backend."""
-    path = Path(path)
+def _prepare_measurement_log(path, header):
+    """Validate/migrate a CSV once before opening it for repeated appends."""
     expected = list(header) + ['backend']
     if path.exists() and path.stat().st_size:
         with path.open(newline='', encoding='utf-8') as file:
@@ -77,12 +76,57 @@ def append_measurement_log(path, header, row, backend):
                         os.unlink(temporary)
             elif old_header != expected:
                 raise ValueError(f'Unexpected measurement CSV header: {path}')
-    needs_header = not path.exists() or path.stat().st_size == 0
-    with path.open('a', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        if needs_header:
-            writer.writerow(expected)
-        writer.writerow(list(row) + [backend])
+    return not path.exists() or path.stat().st_size == 0
+
+
+class MeasurementLog:
+    """One GUI-thread CSV writer; append and flush each row without reopening."""
+
+    def __init__(self):
+        self._file = None
+        self._writer = None
+        self._path = None
+        self._header = None
+
+    def append(self, path, header, row, backend):
+        # Normalize relative paths without stat/resolve calls on the USB drive.
+        path = Path(path).absolute()
+        header = list(header)
+        expected = tuple(header) + ('backend',)
+        try:
+            if self._file is None or path != self._path or expected != self._header:
+                self.close()
+                needs_header = _prepare_measurement_log(path, header)
+                self._file = path.open('a', newline='', encoding='utf-8')
+                self._writer = csv.writer(self._file)
+                self._path, self._header = path, expected
+                if needs_header:
+                    self._writer.writerow(expected)
+            self._writer.writerow(list(row) + [backend])
+            self._file.flush()
+        except Exception:
+            # A failed write/flush may have partly reached the device. Report
+            # that failure, discard the handle, and never replay the row.
+            try:
+                self.close()
+            except Exception:
+                pass
+            raise
+
+    def close(self):
+        file = self._file
+        self._file = self._writer = self._path = self._header = None
+        if file is not None:
+            file.close()
+
+
+def append_measurement_log(path, header, row, backend):
+    """Compatibility helper for one-shot callers; the GUI owns a reusable log."""
+    log = MeasurementLog()
+    try:
+        log.append(path, header, row, backend)
+    finally:
+        log.close()
 
 
 class MOSAInferencer:
