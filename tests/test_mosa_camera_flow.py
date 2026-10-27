@@ -29,6 +29,8 @@ class CameraFlowTests(unittest.TestCase):
         self.app.running = True
         self.app._measurement_busy = True
         self.app._model_changing = False
+        self.app._model_cleanup_failed = False
+        self.app.inferencer = Mock()
         self.app._camera_future = Future()
         self.app._camera_recovery_started = threading.Event()
         self.app.camera = None

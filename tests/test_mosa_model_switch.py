@@ -21,6 +21,7 @@ class ModelSwitchTests(unittest.TestCase):
         self.app.running = True
         self.app._measurement_busy = False
         self.app._model_changing = False
+        self.app._model_cleanup_failed = False
         self.app.selected_model_name = 'A'
         self.app.inferencer = Mock()
         for name in ('root', 'result_container', 'result_label', 'model_name_label',
@@ -31,8 +32,12 @@ class ModelSwitchTests(unittest.TestCase):
     def test_success_uses_selected_slot_runtime_and_closes_previous_model(self):
         old, new = self.app.inferencer, Mock()
         runtime = {'backend': 'tensorrt', 'engine': 'b.engine'}
+        def load(path, config):
+            old.close.assert_called_once()
+            self.assertIsNone(self.app.inferencer)
+            return new
         with patch.dict(namespace, show_model_selection_gui=Mock(return_value=('B', 'b.onnx', None, runtime)),
-                        MOSAInferencer=Mock(return_value=new)):
+                        MOSAInferencer=Mock(side_effect=load)):
             self.app.change_model()
             namespace['show_model_selection_gui'].assert_called_once_with(parent=self.app.root)
             namespace['MOSAInferencer'].assert_called_once_with('b.onnx', runtime)
@@ -43,23 +48,46 @@ class ModelSwitchTests(unittest.TestCase):
         self.assertFalse(self.app._model_changing)
         self.app.measure_button.config.assert_called_with(state='normal')
 
-    def test_cancel_or_failed_load_preserves_previous_model(self):
-        for selection, error in [(('B', None, None, None), None),
-                                 (('B', 'b.onnx', None, {}), RuntimeError('load failed'))]:
-            with self.subTest(selection=selection):
-                old = self.app.inferencer
-                loader = Mock(side_effect=error)
-                with patch.dict(namespace, show_model_selection_gui=Mock(return_value=selection),
-                                MOSAInferencer=loader):
-                    self.app.change_model()
-                self.assertIs(self.app.inferencer, old)
-                self.assertEqual(self.app.selected_model_name, 'A')
-                old.close.assert_not_called()
-                self.assertFalse(self.app._model_changing)
-                if error:
-                    namespace['messagebox'].showerror.assert_called()
-                else:
-                    loader.assert_not_called()
+    def test_cancel_preserves_previous_model(self):
+        old = self.app.inferencer
+        with patch.dict(namespace, show_model_selection_gui=Mock(return_value=(None, None, None, None)),
+                        MOSAInferencer=Mock()):
+            self.app.change_model()
+            namespace['MOSAInferencer'].assert_not_called()
+        self.assertIs(self.app.inferencer, old)
+        old.close.assert_not_called()
+
+    def test_failed_load_blocks_measurement_and_allows_retry(self):
+        old, new = self.app.inferencer, Mock()
+        loader = Mock(side_effect=[RuntimeError('load failed'), new])
+        with patch.dict(namespace, show_model_selection_gui=Mock(return_value=('B', 'b.onnx', None, {})),
+                        MOSAInferencer=loader):
+            self.app.change_model()
+            old.close.assert_called_once()
+            self.assertIsNone(self.app.inferencer)
+            self.assertIsNone(self.app.selected_model_name)
+            self.app.measure_button.config.assert_called_with(state='disabled')
+            self.app.model_change_btn.config.assert_called_with(state='normal')
+            self.app._capture_image_impl = Mock()
+            self.app.capture_image()
+            self.app._capture_image_impl.assert_not_called()
+            self.app.change_model()
+        self.assertIs(self.app.inferencer, new)
+        self.assertEqual(self.app.selected_model_name, 'B')
+        self.app.measure_button.config.assert_called_with(state='normal')
+
+    def test_failed_cleanup_never_loads_new_model_and_requires_restart(self):
+        self.app.inferencer.close.side_effect = RuntimeError('cleanup failed')
+        with patch.dict(namespace, show_model_selection_gui=Mock(return_value=('B', 'b.onnx', None, {})),
+                        MOSAInferencer=Mock()):
+            self.app.change_model()
+            self.app.change_model()
+            namespace['MOSAInferencer'].assert_not_called()
+            namespace['show_model_selection_gui'].assert_called_once()
+        self.assertTrue(self.app._model_cleanup_failed)
+        self.assertIsNone(self.app.inferencer)
+        self.app.measure_button.config.assert_called_with(state='disabled')
+        self.app.model_change_btn.config.assert_called_with(state='disabled')
 
     def test_same_name_is_reloaded_because_path_or_runtime_may_change(self):
         with patch.dict(namespace, show_model_selection_gui=Mock(return_value=('A', 'new.onnx', None, {})),

@@ -619,6 +619,7 @@ class CameraGUI:
         self.running = True
         self._measurement_busy = False
         self._model_changing = False
+        self._model_cleanup_failed = False
         self._camera_future = None
         self._camera_recovery_started = threading.Event()
         self.capture_thread = None
@@ -943,9 +944,10 @@ class CameraGUI:
     def _set_measurement_busy(self, busy):
         self._measurement_busy = busy
         disabled = busy or self._model_changing
-        for widget in (self.measure_button, self.name_entry, self.threshold_entry, self.folder_button,
-                       self.model_change_btn):
+        for widget in (self.name_entry, self.threshold_entry, self.folder_button):
             widget.config(state='disabled' if disabled else 'normal')
+        self.model_change_btn.config(state='disabled' if disabled or self._model_cleanup_failed else 'normal')
+        self.measure_button.config(state='disabled' if disabled or self.inferencer is None else 'normal')
 
     def _start_camera_preview(self):
         if self.capture_thread is not None:
@@ -1079,7 +1081,7 @@ class CameraGUI:
     # 이미지 저장 (원본)
     # -----------------------------
     def capture_image(self):
-        if self._measurement_busy or self._model_changing or not self.running:
+        if self._measurement_busy or self._model_changing or not self.running or self.inferencer is None:
             return
         self._set_measurement_busy(True)
         try:
@@ -1551,7 +1553,7 @@ class CameraGUI:
     # 모델 변경
     # -----------------------------
     def change_model(self):
-        if self._measurement_busy or self._model_changing or not self.running:
+        if self._measurement_busy or self._model_changing or self._model_cleanup_failed or not self.running:
             return
         self._model_changing = True
         self._set_measurement_busy(self._measurement_busy)
@@ -1567,21 +1569,27 @@ class CameraGUI:
             self.result_container.config(bg="gray")
             self.result_label.config(text="Loading...", bg="gray", font=("Arial", 24, "bold"))
             self.root.update_idletasks()
-            new_inferencer = MOSAInferencer(model_path_vis, runtime)
             old_inferencer = self.inferencer
-            self.inferencer = new_inferencer
+            self.inferencer = None
+            self.selected_model_name = None
+            self.model_name_label.config(text="Model: (없음)")
+            if old_inferencer is not None:
+                try:
+                    old_inferencer.close()
+                except Exception as exc:
+                    self._model_cleanup_failed = True
+                    raise RuntimeError("이전 모델 정리에 실패했습니다. 프로그램을 종료하고 다시 실행하세요.") from exc
+                del old_inferencer
+            self.inferencer = MOSAInferencer(model_path_vis, runtime)
             self.selected_model_name = name
             self.model_name_label.config(text="Model: " + name)
-            try:
-                old_inferencer.close()
-            except Exception as exc:
-                messagebox.showwarning("모델 변경", f"이전 모델 자원 정리 실패:\n{exc}")
             self.result_container.config(bg="gray")
             self.result_label.config(text="READY", bg="gray", font=("Arial", 35, "bold"))
             print(f"[Model_change] 모델 변경 완료: {name}")
         except Exception as exc:
             self.result_container.config(bg="gray")
-            self.result_label.config(text="READY", bg="gray", font=("Arial", 35, "bold"))
+            if self.inferencer is None:
+                self.result_label.config(text="모델 없음", bg="gray", font=("Arial", 24, "bold"))
             messagebox.showerror("오류", f"모델 변경 실패:\n{exc}")
             print(f"[Model_change] 모델 변경 실패: {exc}")
         finally:
@@ -1605,7 +1613,8 @@ class CameraGUI:
             messagebox.showerror('로그 파일 종료 실패', str(exc))
         finally:
             try:
-                self.inferencer.close()
+                if self.inferencer is not None:
+                    self.inferencer.close()
             finally:
                 self.root.destroy()
 
@@ -1660,4 +1669,6 @@ if __name__ == "__main__":
                 if app is not None:
                     app.measurement_log.close()
             finally:
-                (app.inferencer if app is not None else inferencer).close()
+                active_inferencer = app.inferencer if app is not None else inferencer
+                if active_inferencer is not None:
+                    active_inferencer.close()
