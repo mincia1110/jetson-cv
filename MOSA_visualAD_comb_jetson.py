@@ -107,9 +107,9 @@ CROP_BOTTOM = 200
 # -----------------------------
 # 모델 선택 GUI 함수
 # -----------------------------
-def show_model_selection_gui():
+def show_model_selection_gui(parent=None):
     """
-    프로그램 시작 시 AI 모델을 선택하는 GUI 창
+    시작 시에는 독립 창, 실행 중에는 메인 창의 모달 창으로 표시한다.
     """
 
     print("[Model_selection]")
@@ -136,9 +136,24 @@ def show_model_selection_gui():
         model_E_path_vis = data.get("model_E_path_vis", None)
         model_E_path_sub = data.get("model_E_path_sub", None)
     except Exception as exc:
+        if parent is not None:
+            raise
         show_config_error(exc)
         sys.exit(1)
 
+    if parent is not None:
+        root = tk.Toplevel(parent)
+        root.transient(parent)
+        root.grab_set()
+    else:
+        root = tk.Tk()
+
+    def close_selection():
+        if parent is None:
+            root.quit()
+        root.destroy()
+
+    root.protocol('WM_DELETE_WINDOW', close_selection)
 
     def select_model_a():
         nonlocal selected_model_name, selected_slot
@@ -146,8 +161,7 @@ def show_model_selection_gui():
         selected_model_name = model_A_name
         selected_vis_model["path"] = model_A_path_vis
         selected_sub_model["path"] = model_A_path_sub
-        root.quit()
-        root.destroy()
+        close_selection()
 
     def select_model_b():
         nonlocal selected_model_name, selected_slot
@@ -155,8 +169,7 @@ def show_model_selection_gui():
         selected_model_name = model_B_name
         selected_vis_model["path"] = model_B_path_vis
         selected_sub_model["path"] = model_B_path_sub
-        root.quit()
-        root.destroy()
+        close_selection()
 
     def select_model_c():
         nonlocal selected_model_name, selected_slot
@@ -164,8 +177,7 @@ def show_model_selection_gui():
         selected_model_name = model_C_name
         selected_vis_model["path"] = model_C_path_vis
         selected_sub_model["path"] = model_C_path_sub
-        root.quit()
-        root.destroy()
+        close_selection()
 
     def select_model_d():
         nonlocal selected_model_name, selected_slot
@@ -173,8 +185,7 @@ def show_model_selection_gui():
         selected_model_name = model_D_name
         selected_vis_model["path"] = model_D_path_vis
         selected_sub_model["path"] = model_D_path_sub
-        root.quit()
-        root.destroy()
+        close_selection()
 
     def select_model_e():
         nonlocal selected_model_name, selected_slot
@@ -182,10 +193,8 @@ def show_model_selection_gui():
         selected_model_name = model_E_name
         selected_vis_model["path"] = model_E_path_vis
         selected_sub_model["path"] = model_E_path_sub
-        root.quit()
-        root.destroy()
+        close_selection()
 
-    root = tk.Tk()
     root.title("Model Selection")
     root.geometry("300x320")
     root.resizable(False, False)
@@ -263,7 +272,10 @@ def show_model_selection_gui():
     y = (root.winfo_screenheight() - root.winfo_height()) // 2
     root.geometry(f"+{x}+{y}")
 
-    root.mainloop()
+    if parent is not None:
+        root.wait_window()
+    else:
+        root.mainloop()
 
     return selected_model_name, selected_vis_model["path"], selected_sub_model["path"], (model_runtime(data, selected_slot) if selected_slot else None)
 
@@ -606,6 +618,7 @@ class CameraGUI:
         self.frame_lock = threading.Lock()
         self.running = True
         self._measurement_busy = False
+        self._model_changing = False
         self._camera_future = None
         self._camera_recovery_started = threading.Event()
         self.capture_thread = None
@@ -731,6 +744,10 @@ class CameraGUI:
             background="yellow"
         )
         self.model_name_label.pack(fill="x", pady=2, anchor="center")
+        self.model_change_btn = ttk.Button(
+            model_frame, text="모델 변경", command=self.change_model
+        )
+        self.model_change_btn.pack(fill="x", pady=3)
         # =============================
         # 저장 폴더
         # =============================
@@ -925,8 +942,10 @@ class CameraGUI:
 
     def _set_measurement_busy(self, busy):
         self._measurement_busy = busy
-        for widget in (self.measure_button, self.name_entry, self.threshold_entry, self.folder_button):
-            widget.config(state='disabled' if busy else 'normal')
+        disabled = busy or self._model_changing
+        for widget in (self.measure_button, self.name_entry, self.threshold_entry, self.folder_button,
+                       self.model_change_btn):
+            widget.config(state='disabled' if disabled else 'normal')
 
     def _start_camera_preview(self):
         if self.capture_thread is not None:
@@ -1060,7 +1079,7 @@ class CameraGUI:
     # 이미지 저장 (원본)
     # -----------------------------
     def capture_image(self):
-        if self._measurement_busy or not self.running:
+        if self._measurement_busy or self._model_changing or not self.running:
             return
         self._set_measurement_busy(True)
         try:
@@ -1529,6 +1548,48 @@ class CameraGUI:
         print("anomaly label : ", str(pred_label))
 
     # -----------------------------
+    # 모델 변경
+    # -----------------------------
+    def change_model(self):
+        if self._measurement_busy or self._model_changing or not self.running:
+            return
+        self._model_changing = True
+        self._set_measurement_busy(self._measurement_busy)
+        try:
+            name, model_path_vis, model_path_sub, runtime = show_model_selection_gui(parent=self.root)
+            if model_path_vis is None or not self.running:
+                return
+            if self._measurement_busy:
+                messagebox.showwarning("모델 변경", "카메라 작업이 끝난 후 다시 선택해주세요.")
+                return
+            print(f"[Model_change] 모델 변경: {self.selected_model_name} -> {name}")
+            print(f"[Model_change] 새 vis 모델: {model_path_vis}")
+            self.result_container.config(bg="gray")
+            self.result_label.config(text="Loading...", bg="gray", font=("Arial", 24, "bold"))
+            self.root.update_idletasks()
+            new_inferencer = MOSAInferencer(model_path_vis, runtime)
+            old_inferencer = self.inferencer
+            self.inferencer = new_inferencer
+            self.selected_model_name = name
+            self.model_name_label.config(text="Model: " + name)
+            try:
+                old_inferencer.close()
+            except Exception as exc:
+                messagebox.showwarning("모델 변경", f"이전 모델 자원 정리 실패:\n{exc}")
+            self.result_container.config(bg="gray")
+            self.result_label.config(text="READY", bg="gray", font=("Arial", 35, "bold"))
+            print(f"[Model_change] 모델 변경 완료: {name}")
+        except Exception as exc:
+            self.result_container.config(bg="gray")
+            self.result_label.config(text="READY", bg="gray", font=("Arial", 35, "bold"))
+            messagebox.showerror("오류", f"모델 변경 실패:\n{exc}")
+            print(f"[Model_change] 모델 변경 실패: {exc}")
+        finally:
+            self._model_changing = False
+            if self.running:
+                self._set_measurement_busy(self._measurement_busy)
+
+    # -----------------------------
     # 종료
     # -----------------------------
     def on_close(self):
@@ -1599,4 +1660,4 @@ if __name__ == "__main__":
                 if app is not None:
                     app.measurement_log.close()
             finally:
-                inferencer.close()
+                (app.inferencer if app is not None else inferencer).close()

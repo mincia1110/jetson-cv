@@ -37,6 +37,10 @@
 
 검증(2026-10-19): `/tmp/jetson-cv-v03-check/bin/python -B -m unittest discover -s tests -v`에서 **90개 통과, skip 없음**. 파일 모드의 무카메라 시작, 비동기 연결 대기·실패·재시도, 파일↔촬영 전환과 모델 재사용, OK/NG 표시, 연결 대기 중 종료와 최종 정리를 mock으로 확인했다. 실제 Jetson의 카메라·GUI·CUDA 동작은 별도 확인이 필요하다.
 
+## 실행 중 모델 변경
+
+메인 화면의 **모델 변경** 버튼에서 `data.json`의 A~E 항목을 다시 선택한다. 선택 시 파일을 다시 읽으며 ONNX 경로와 backend/provider/input_name, TensorRT 모드라면 해당 슬롯의 엔진 경로를 적용한다. 이름이 같아도 경로나 설정을 바꿨을 수 있으므로 다시 로드한다. 취소하거나 새 모델 로드에 실패하면 기존 모델을 유지한다. 측정 또는 카메라 작업 중에는 변경할 수 없다. 로드는 기존 추론기와 동일한 GUI 스레드에서 수행하므로 로딩 중 화면이 잠시 멈출 수 있으며, 전환 중에는 기존 모델과 새 모델이 잠시 함께 메모리를 사용한다. Jetson 장치에서 실제 모델과 CUDA/TensorRT의 전환을 확인해야 한다.
+
 ## 표시 이미지 생성의 불필요한 작업 정리
 
 - 히트맵은 기존 Matplotlib 설정과 PNG 픽셀을 유지하며 `BytesIO`에서 OpenCV로 전달한다. 저장 폴더에 임시 `{name}_heatmap.png`를 쓰고 다시 읽어 삭제하는 왕복이 없어졌다. 즉시 읽고 버리는 메모리 중간 PNG는 무압축 PNG로 만들어 압축 연산도 생략한다. 원본 PNG, 최종 `{name}_resulf.jpg` 및 CSV 저장 방식은 유지한다.
@@ -124,7 +128,7 @@ python -c "import torch, torchvision, scipy, matplotlib, cv2, onnxruntime; print
 
 MOSA의 windows_800/windows_800_full은 설정이 같으면 측정 전 제어값을 다시 쓰지 않는다(settings_action=preserved). 바뀐 카메라 설정은 다음 측정에서 적용한다. fixed 모드와 독립 카메라 진단 GUI는 매회 재적용 정책을 유지한다. 노출 readback은 여전히 unavailable이다.
 
-측정 log.csv의 마지막 열 backend에 실제 로드한 onnx/tensorrt를 기록한다. 기존 형식의 로그는 처음 기록할 때 backend 열을 추가하며 이전 행은 unknown으로 보존한다. 실행 중 data.json의 backend만 바꿔도 이미 로드한 추론기는 바뀌지 않으므로 전환 시 앱을 재시작한다.
+측정 log.csv의 마지막 열 backend에 실제 로드한 onnx/tensorrt를 기록한다. 기존 형식의 로그는 처음 기록할 때 backend 열을 추가하며 이전 행은 unknown으로 보존한다. 실행 중 data.json을 수정한 뒤 모델 변경 버튼으로 항목을 다시 선택하면 새 backend 설정이 적용된다.
 
 ## 영상 속성 재현
 

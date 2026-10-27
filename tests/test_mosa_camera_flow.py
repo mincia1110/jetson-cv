@@ -28,6 +28,7 @@ class CameraFlowTests(unittest.TestCase):
         self.app = namespace['CameraGUI'].__new__(namespace['CameraGUI'])
         self.app.running = True
         self.app._measurement_busy = True
+        self.app._model_changing = False
         self.app._camera_future = Future()
         self.app._camera_recovery_started = threading.Event()
         self.app.camera = None
@@ -35,7 +36,8 @@ class CameraFlowTests(unittest.TestCase):
         self.app.current_frame = None
         self.app.measurement_log = Mock()
         for name in ('root', 'result_container', 'result_label', 'last_save_label',
-                     'measure_button', 'name_entry', 'threshold_entry', 'folder_button'):
+                     'measure_button', 'name_entry', 'threshold_entry', 'folder_button',
+                     'model_change_btn', 'model_name_label'):
             setattr(self.app, name, Mock())
         self.app._process_measurement = Mock()
 
@@ -362,8 +364,9 @@ class CameraStartupTests(unittest.TestCase):
     def test_main_finally_closes_camera_connected_after_file_mode_start(self):
         main = next(node for node in tree.body if isinstance(node, ast.If)
                     and ast.unparse(node.test) == "__name__ == '__main__'")
-        root, app, camera, inferencer = Mock(), Mock(), Mock(), Mock()
+        root, app, camera, inferencer, switched_inferencer = Mock(), Mock(), Mock(), Mock(), Mock()
         app.camera = None
+        app.inferencer = switched_inferencer
 
         def close_mainloop():
             app.camera = camera
@@ -380,7 +383,8 @@ class CameraStartupTests(unittest.TestCase):
         self.assertFalse(app.running)
         camera.close.assert_called_once()
         app.measurement_log.close.assert_called_once()
-        inferencer.close.assert_called_once()
+        switched_inferencer.close.assert_called_once()
+        inferencer.close.assert_not_called()
 
 
 if __name__ == '__main__':
