@@ -113,6 +113,12 @@ class MeasurementLog:
                 pass
             raise
 
+    def duplicate_fd(self):
+        """Duplicate the current flushed log descriptor for background fsync."""
+        if self._file is None:
+            raise RuntimeError('No measurement CSV is open for synchronization')
+        return os.dup(self._file.fileno())
+
     def close(self):
         file = self._file
         self._file = self._writer = self._path = self._header = None

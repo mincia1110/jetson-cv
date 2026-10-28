@@ -59,6 +59,7 @@ from utils.transforms import get_transform
 BRIDGE_DIR = Path(__file__).resolve().parent / 'scripts'
 sys.path.insert(0, str(BRIDGE_DIR))
 from mosa_jetson_bridge import MOSACamera, MOSAInferencer, MeasurementLog, camera_config, model_runtime, read_mosa_data, user_th_inference
+from mosa_storage import BackgroundStorageSync
 def show_config_error(exc):
     detail = (f"설정 파일: {Path('data.json').resolve()}\n"
               f"{type(exc).__name__}: {exc}")
@@ -622,6 +623,8 @@ class CameraGUI:
         self._model_cleanup_failed = False
         self._camera_future = None
         self._camera_recovery_started = threading.Event()
+        self._storage_sync = None
+        self._storage_sync_polling = False
         self.capture_thread = None
 
         # -----------------------------
@@ -890,6 +893,36 @@ class CameraGUI:
                 f'DATA output path resolves outside {mount_point}: {path}\n'
                 'Choose a directory/file on the mounted DATA partition.')
 
+    def _queue_storage_sync(self):
+        image_paths = getattr(self, '_pending_sync_images', ())
+        csv_path = getattr(self, '_pending_sync_csv', None)
+        self._pending_sync_images = ()
+        self._pending_sync_csv = None
+        if not image_paths and csv_path is None:
+            return
+        try:
+            if self._storage_sync is None:
+                self._storage_sync = BackgroundStorageSync(self._require_data_mount)
+            csv_fd = self.measurement_log.duplicate_fd() if csv_path is not None else None
+            self._storage_sync.submit(image_paths, csv_path=csv_path, csv_fd=csv_fd)
+            if not self._storage_sync_polling:
+                self._storage_sync_polling = True
+                self.root.after(100, self._poll_storage_sync)
+        except Exception as exc:
+            print(f'[Storage sync] Scheduling failed: {exc}', file=sys.stderr, flush=True)
+            messagebox.showerror('저장 동기화 실패', str(exc))
+
+    def _poll_storage_sync(self):
+        if not self.running:
+            self._storage_sync_polling = False
+            return
+        for error in self._storage_sync.take_errors():
+            messagebox.showerror('저장 동기화 실패', error)
+        if self._storage_sync.pending:
+            self.root.after(100, self._poll_storage_sync)
+        else:
+            self._storage_sync_polling = False
+
     def load_json(self):
         try:
             data = read_mosa_data()
@@ -1122,6 +1155,7 @@ class CameraGUI:
         finally:
             if self._camera_future is None:
                 self._set_measurement_busy(False)
+            self._queue_storage_sync()
 
     def _poll_camera(self, name, filepath, first_time):
         # All Tk calls and inference stay on the GUI thread. Camera reset and
@@ -1162,6 +1196,7 @@ class CameraGUI:
             # _process_measurement may have started an explicit reset.
             if self._camera_future is None:
                 self._set_measurement_busy(False)
+            self._queue_storage_sync()
 
     def _capture_image_impl(self):
         # 측정 시작 시 "Wait" 표시
@@ -1288,9 +1323,13 @@ class CameraGUI:
         if self.Data_log_flag == 1:
             self._require_data_mount(self.CSV_path)
         start = first_time
+        saved_images = []
+        self._pending_sync_images = saved_images
+        self._pending_sync_csv = None
         if self.Camera_or_png_flag == 1:
             if not cv2.imwrite(filepath, frame_to_save):
                 raise RuntimeError(f'Image write failed: {filepath}')
+            saved_images.append(filepath)
         # cv2.imwrite(filepath, frame_to_save)
 
         now = datetime.datetime.now()
@@ -1527,6 +1566,7 @@ class CameraGUI:
             self._require_data_mount(filepath_combined)
             if not cv2.imwrite(filepath_combined, combined_img):
                 raise RuntimeError(f'Image write failed: {filepath_combined}')
+            saved_images.append(filepath_combined)
 
         if (pred_score < self.user_threshold):
             result = "OK"
@@ -1581,6 +1621,7 @@ class CameraGUI:
                  bright_sampling, RG_diff, self.reset_flag, AutoExposure, Exposure, Brightness,
                  self.BRIGHT_min, self.BRIGHT_max, self.RG_gab],
                 self.inferencer.backend_name)
+            self._pending_sync_csv = csvfilepath
 
         sec = time.time() - first_time
         print("= [Total Time]  : ", datetime.timedelta(seconds=sec))
@@ -1701,8 +1742,14 @@ if __name__ == "__main__":
             app.running = False
         active_camera = app.camera if app is not None else camera
         try:
-            if active_camera is not None:
-                active_camera.close()
+            try:
+                if app is not None:
+                    storage_sync = getattr(app, '_storage_sync', None)
+                    if storage_sync is not None:
+                        storage_sync.close()
+            finally:
+                if active_camera is not None:
+                    active_camera.close()
         finally:
             try:
                 if app is not None:

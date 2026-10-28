@@ -553,11 +553,29 @@ MOSA GUI의 **저장 폴더**에서 `/mnt/jetson_data/inference_results`를 선�
 
 이는 마운트 누락·측정 사이 언마운트를 탐지하는 방어다. 검사와 쓰기 사이의 강제 언마운트 경쟁, 잘못된 장치의 동일 위치 마운트, 매체 불량·공간 부족까지 보장하지 않는다. 앱 실행 중 언마운트하지 않고, 오류 발생 시 이미 일부 저장된 파일이 있을 수 있음을 확인한다. [Python ismount 문서](https://docs.python.org/3/library/os.path.html#os.path.ismount) 참고.
 
+각 측정에서 저장한 원본 PNG(카메라 모드), 결과 JPG, 활성화된 CSV는 **별도 작업 스레드에서 파일과 상위 디렉터리를 `fsync()`**한다. 파일 입력 모드의 기존 PNG/BMP는 동기화 대상에 넣지 않는다. 이미지가 저장된 뒤 추론이 실패해도 이미 기록한 이미지는 동기화 큐에 넘긴다. CSV는 기존 `flush()` 이후 열린 파일의 핸들을 복제해 넘기므로, 다음 측정에서 CSV를 계속 기록하거나 다른 로그로 전환해도 이전 작업의 파일이 유지된다. [Linux fsync 문서](https://man7.org/linux/man-pages/man2/fsync.2.html).
+
+**저장 중·완료 표시를 추가하거나 다음 측정을 기다리게 하지 않는다.** 정상 동작의 화면·버튼 흐름은 기존대로 유지한다. 동기화는 한 작업씩 처리하고 오류만 GUI 스레드에서 알린다. 창을 닫은 뒤에는 남은 동기화 작업이 끝날 때까지 프로세스가 기다린다. 이 동작은 매 측정 완료 시점에 동기화까지 끝났음을 뜻하지 않는다. SD카드 이동은 기존대로 Jetson 정상 종료·전원 꺼짐 확인 후, Windows에서는 안전하게 제거한 후 수행한다.
+
+터미널 로그의 `[Storage sync] status=ok queue=...s sync=...s images=... csv=...`에서 대기 시간과 동기화 시간을 확인한다. 기존 `[Total Time]`은 백그라운드 동기화 시간을 포함하지 않는다. SD 쓰기 경합이 있으면 다음 측정의 저장 시간에 영향이 있을 수 있으므로, 실제 장비의 연속 측정으로 확인한다.
+
+별도 지연 측정 도구는 임시 폴더에 15MiB 원본 대용 파일·512KiB 결과 대용 파일·CSV를 기록하고 정리한다. 이미지 인코딩·추론 시간은 측정하지 않는다. DATA 마운트와 기존 결과 디렉터리를 확인한 뒤 Jetson에서 실행한다.
+
+```bash
+python3 scripts/benchmark_storage_sync.py \
+  --directory /mnt/jetson_data/inference_results \
+  --mount-point /mnt/jetson_data --iterations 10
+```
+
+`write_seconds`는 파일 쓰기, `submit_seconds`는 GUI 측 큐 제출, `queue_seconds`는 작업 시작까지 대기, `sync_seconds`는 작업 스레드의 동기화 소요 시간이다. 요약의 단위는 ms다. 2026-10-28 로컬 Mac `/private/tmp`에서 10회 측정한 큐 제출 시간은 중앙값 약 0.026ms·최대 약 0.125ms였으며, 이는 Jetson SD/exFAT 지연의 측정값이 아니다. Jetson 실측은 별도다.
+
 검증 명령(모델·카메라·디스플레이 없이 실행):
 
 ```bash
 python3 -m unittest discover -s tests -p test_mosa_storage.py -v
-python3 -m py_compile MOSA_visualAD_comb_jetson.py tests/test_mosa_storage.py
+python3 -m unittest discover -s tests -p test_mosa_storage_sync.py -v
+python3 -m unittest discover -s tests -p test_measurement_log.py -v
+python3 -m py_compile MOSA_visualAD_comb_jetson.py scripts/mosa_jetson_bridge.py scripts/mosa_storage.py scripts/benchmark_storage_sync.py tests/test_mosa_storage.py tests/test_mosa_storage_sync.py tests/test_measurement_log.py
 ```
 
 ### 14.9 확인 상태와 운용 수칙
@@ -571,6 +589,7 @@ python3 -m py_compile MOSA_visualAD_comb_jetson.py tests/test_mosa_storage.py
 | GPT 유형 수정 후 Windows에서 DATA·내부 파일 보기 | 사용자 확인 |
 | Windows에서 새 파일 작성 후 Jetson 재읽기 | 아직 확인 보고 없음 |
 | 추가한 MOSA 마운트 방어 | 로컬 단위 테스트 20개 통과, 수정 코드의 Jetson GUI 실물 검증은 별도 |
+| 백그라운드 저장 동기화 | 로컬 단위 테스트 13개 통과, Jetson SD/exFAT 지연·GUI 실물 검증은 별도 |
 | 장시간 연속 추론 저장 성능·매체 수명 | 별도 검증 필요 |
 
 Jetson에서 MOSA를 종료하여 CSV 등 열린 파일을 닫고 `sync` 후 `sudo poweroff`한다. 전원이 완전히 꺼진 다음 SD카드를 옮긴다. OS 카드이므로 실행 중 빼지 않는다. Windows에서도 안전하게 제거한다. exFAT 공유 볼륨은 결과 교환용이며 유일한 백업으로 사용하지 않는다.

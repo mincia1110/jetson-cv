@@ -1,15 +1,24 @@
 """CSV compatibility, per-row visibility and reusable USB writer lifecycle."""
+import ast
 import csv
 import io
+import os
 from pathlib import Path
-import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from mosa_jetson_bridge import MeasurementLog
-import mosa_jetson_bridge as bridge
+# Exercise the actual CSV implementation without importing the unrelated
+# camera/inference stack (numpy/torch/OpenCV).
+source = Path(__file__).resolve().parents[1] / 'scripts/mosa_jetson_bridge.py'
+nodes = [node for node in ast.parse(source.read_text()).body
+         if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+         and node.name in ('MeasurementLog', '_prepare_measurement_log')]
+bridge = types.ModuleType('measurement_log_under_test')
+bridge.__dict__.update(os=os, csv=csv, tempfile=tempfile, Path=Path)
+exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), bridge.__dict__)
+MeasurementLog = bridge.MeasurementLog
 
 
 class MeasurementLogTests(unittest.TestCase):
