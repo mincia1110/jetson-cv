@@ -867,6 +867,29 @@ class CameraGUI:
         # print(">  ",bright_sampling)
         # print(">> ",RG_diff)
 
+    @staticmethod
+    def _require_data_mount(path):
+        """Reject an unmounted shared DATA directory without changing local workflows."""
+        mount_point = '/mnt/jetson_data'
+        candidate = os.path.expanduser(os.fspath(path))
+        # Resolve symlinks before abspath collapses '..', matching filesystem traversal.
+        resolved = os.path.realpath(candidate)
+        candidate = os.path.abspath(candidate)
+        lexical_data = os.path.commonpath((candidate, mount_point)) == mount_point
+        resolved_data = os.path.commonpath((resolved, mount_point)) == mount_point
+        if not lexical_data and not resolved_data:
+            return  # Explicit local output paths remain supported.
+        if not os.path.ismount(mount_point):
+            raise RuntimeError(
+                f'JETSON_DATA is not mounted at {mount_point}.\n'
+                'Measurement/save blocked to avoid writing into the OS partition.\n'
+                f'Check: findmnt --mountpoint {mount_point}\n'
+                f'After checking /etc/fstab: sudo mount {mount_point}')
+        if lexical_data and not resolved_data:
+            raise RuntimeError(
+                f'DATA output path resolves outside {mount_point}: {path}\n'
+                'Choose a directory/file on the mounted DATA partition.')
+
     def load_json(self):
         try:
             data = read_mosa_data()
@@ -900,7 +923,9 @@ class CameraGUI:
             show_config_error(exc)
             sys.exit(1)
 
-        if self.Data_log_flag != 1:
+        if self.Data_log_flag == 1:
+            self._require_data_mount(self.CSV_path)
+        else:
             self.measurement_log.close()
         return False  # The worker checks the requested settings at each capture.
 
@@ -1043,6 +1068,11 @@ class CameraGUI:
     def select_save_folder(self):
         folder = filedialog.askdirectory(title="이미지 저장 폴더 선택")
         if folder:
+            try:
+                self._require_data_mount(folder)
+            except RuntimeError as exc:
+                messagebox.showerror('DATA storage unavailable', str(exc))
+                return
             self.save_dir = folder
             self.folder_label.config(
                 text=f"저장 폴더:\n{self.save_dir}",
@@ -1222,7 +1252,9 @@ class CameraGUI:
             #                  ) / 10.0
 
         self.load_json()
+        self._require_data_mount(self.save_dir)
         filepath = os.path.join(self.save_dir, f"{name}.png")
+        self._require_data_mount(filepath)
 
         # ✅ 동일 파일 존재 시 덮어쓰기 확인
         if self.Camera_or_png_flag == 1 and os.path.exists(filepath):
@@ -1251,6 +1283,10 @@ class CameraGUI:
         self._process_measurement(name, filepath, first_time)
 
     def _process_measurement(self, name, filepath, first_time, frame_to_save=None):
+        # Recheck after asynchronous camera preparation, before any output.
+        self._require_data_mount(filepath)
+        if self.Data_log_flag == 1:
+            self._require_data_mount(self.CSV_path)
         start = first_time
         if self.Camera_or_png_flag == 1:
             if not cv2.imwrite(filepath, frame_to_save):
@@ -1488,7 +1524,9 @@ class CameraGUI:
         else:
             combined_img = cv2.vconcat([img_show3, img_show2])
             filepath_combined = os.path.join(self.save_dir, f"{name}_resulf.jpg")
-            cv2.imwrite(filepath_combined, combined_img)
+            self._require_data_mount(filepath_combined)
+            if not cv2.imwrite(filepath_combined, combined_img):
+                raise RuntimeError(f'Image write failed: {filepath_combined}')
 
         if (pred_score < self.user_threshold):
             result = "OK"
@@ -1534,6 +1572,7 @@ class CameraGUI:
             Exposure = self.ExposureTime + ' requested; readback unavailable'
             Brightness = self.camera_report.get('after') or self.camera_report.get('before', {})
             Brightness = Brightness.get('brightness_control', 'unavailable')
+            self._require_data_mount(csvfilepath)
             self.measurement_log.append(
                 csvfilepath,
                 ["Date", "Model", "File name", "NG/OK ", "anomaly score", "anomaly label", "threshold", "밝기값", "RG_diff",

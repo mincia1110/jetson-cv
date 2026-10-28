@@ -2,6 +2,8 @@
 
 이 문서가 설치·실행 절차의 통합 진입점이다. 목표는 Jetson Orin Nano Super에서 Dino-Lite를 제어하고 `MOSA_visualAD_comb_jetson.py`를 ONNX CUDA로 실행하여 오프라인 운용하는 것이다. TensorRT 전환은 선택 사항이다. ONNX 속도는 사용자 요구에 충분했으며, 현재 우선순위는 Windows GUI와 anomaly score 및 카메라 조건 비교다. TRT 양자화는 후순위다. 진행 중 새 의존성·오류가 확인되면 해당 단계와 마지막 검증 표를 갱신한다.
 
+**SD카드 OS/DATA 분리·Windows 공유 설정:** [14절의 실제 작업 기록](#sd-data-workflow)을 참조한다.
+
 ## 0. 기준 환경과 준비물
 
 - Jetson Orin Nano Super 개발 키트, microSD, DP 모니터, USB 키보드·마우스.
@@ -308,3 +310,267 @@ doctor.json의 error 항목도 확인한다. doctor는 환경 조회이며 GPU �
 | 자동복구 안 됨 | reset_flag_en 및 report.reset_succeeded 확인. READY는 재초기화 완료로, 수동 재측정 필요. 영상 조건 미달이 지속되면 다음 측정도 추론 차단 |
 
 모든 설치가 끝나면 `python -m pip check`와 10단계 import 검사를 다시 수행한다. 이 문서는 확인된 작업 흐름이며, 새 SD에서 전체 절차를 처음부터 재실행한 인수 결과는 아직 없다.
+
+<a id="sd-data-workflow"></a>
+## 14. microSD OS/DATA 분리와 Windows 공유 — 2026-10-28
+
+이 절은 **이미 설정된 Jetson의 OS를 보존하면서 같은 microSD에 공유 DATA 파티션을 추가한 실제 작업 기록**이다. 사내 Windows PC의 부팅 USB·상용 파티션 도구를 사용하지 않고, **Ubuntu 20.04 Linux NBPC의 GParted + exfat-utils**로 작업했다. 새 카드에 전체 설치를 재현한 결과와는 구분한다.
+
+장비 작업의 확인 상태는 제공된 작업 기록을 옮긴 것이며, 이 패치 적용 세션에서 실물 작업을 재수행한 것은 아니다.
+
+### 14.1 확인된 환경과 최종 구성
+
+| 항목 | 이번 작업에서 확인한 값 |
+| --- | --- |
+| Jetson Linux / 커널 | `/etc/nv_tegra_release`: R36.4.7 / `5.15.148-tegra` |
+| microSD | 256GB 제품, Linux 표시 약 238.3GiB, GPT |
+| 기존 OS | APP, `/dev/mmcblk0p1`, ext4, 축소 전 사용량 약 36GiB |
+| 최종 OS / DATA | APP 128GiB / exFAT 약 108.8GiB |
+| DATA 이름·볼륨 레이블 | `JETSON_DATA` |
+| Jetson 마운트 위치 | **`/mnt/jetson_data`** |
+| Jetson 드라이버 | `exfat-fuse` 1.3.0+git20220115, `findmnt`에는 `fuseblk`로 표시 |
+| DATA GPT 유형 | **Microsoft Basic Data**, `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7` |
+
+이때 확인한 **OS의 L4T R36.4.7**은 앞의 초기 설치 절차에서 기대하는 R36.4.4 및 UEFI 버전 기록과 별개다. 이 저장장치 작업을 이유로 `setup_jetson.sh`를 재실행하거나 버전 검사를 제거하지 않는다. 현재 장비의 JetPack 메타패키지 버전까지 새로 확인한 것은 아니다.
+
+`lsblk`의 파티션 번호순을 물리적 위치순으로 해석하면 안 된다. 이번 카드의 `parted ... print free` 결과에서는 **p2~p15가 앞쪽 약 1~1493MiB, p1(APP)가 그 뒤부터 카드 끝까지**였다. 따라서 APP의 시작을 그대로 두고 끝만 축소했으며, 기존 부팅·복구 파티션은 이동하지 않았다.
+
+```text
+물리 배치(개념도)
+[NVIDIA p2~p15 약 1.46GiB] [p1 APP ext4 128GiB] [p16 DATA exFAT 약 108.8GiB]
+```
+
+### 14.2 Jetson에서 exFAT 지원과 FUSE 확인
+
+```bash
+head -n 1 /etc/nv_tegra_release
+uname -r
+zcat /proc/config.gz | grep -E 'CONFIG_(EXFAT_FS|VFAT_FS|FUSE_FS)'
+sudo modprobe fuse
+lsmod | grep '^fuse'
+```
+
+실제 결과는 `CONFIG_FUSE_FS=m`, `CONFIG_VFAT_FS=y`, `# CONFIG_EXFAT_FS is not set`이었다. `modprobe exfat`은 모듈 없음으로 실패했지만 FUSE 모듈은 정상 로딩됐다. **exfatprogs는 포맷·검사 도구이지 누락된 커널 exFAT 드라이버를 설치하는 패키지가 아니다.**
+
+먼저 설치 계획을 확인하고, 기존 패키지 제거가 없는 경우 설치한다.
+
+```bash
+sudo apt-get -s install exfat-fuse exfatprogs
+sudo apt install exfat-fuse exfatprogs
+command -v mount.exfat-fuse
+command -v mkfs.exfat
+ls -l /dev/fuse
+```
+
+이번 계획은 `exfat-fuse`, `exfatprogs`, `libfuse2` 신규 3개, 제거 0개였다. `autoremove` 안내는 별개이며 실행하지 않았다. 다른 장비에서 중요한 패키지 제거가 예고되면 설치를 중단하고 의존성을 확인한다.
+
+실제 파티션 작업 전 128MiB 임시 이미지에 loop 장치를 연결하여 exFAT 포맷 → FUSE 마운트 → `Jetson exFAT OK` 기록 → 언마운트·재마운트 → 내용 읽기를 검증했다. 이후 loop 장치와 임시 이미지를 정리했다. 이는 기본 호환성 검증이며 장시간 쓰기 성능 시험은 아니다.
+
+### 14.3 Ubuntu 20.04 NBPC에서 APP 축소·DATA 생성
+
+**기존 카드 전체 이미지 또는 복구 가능한 백업을 먼저 확보한다. 파티션 축소는 데이터 손상 위험이 있으며, 백업 완료 여부를 이 기록만으로 가정하지 않는다.** Jetson을 정상 종료하고 SD카드를 NBPC에 연결한다. 실행 중인 Jetson 루트 파티션을 그 Jetson에서 축소하지 않는다.
+
+```bash
+# Ubuntu 20.04 NBPC에서 실행
+sudo apt update
+sudo apt install gparted e2fsprogs exfat-utils
+lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINT
+sudo gparted
+```
+
+NBPC에서 `exfatprogs`를 찾지 못했던 문제는 Ubuntu 20.04의 `exfat-utils`를 사용해 해결했다. 이 환경에서는 **GParted로 unformatted 파티션 생성 후 터미널에서 exFAT 포맷**했다. 최신 GParted의 exFAT 생성 지원 여부를 이 구버전 환경에 그대로 적용하지 않는다.
+
+GParted에서 약 238.3GiB **SD카드**를 선택한다. 내부 SSD와 혼동하지 않는다. 필요하면 자동 마운트된 SD 파티션을 해제한다.
+
+| 작업 | 설정 |
+| --- | --- |
+| APP → Resize/Move | `Free space preceding` 기존 값 유지, `New size = 131072 MiB`, `Align to = MiB` |
+| APP 축소 적용 | 시작 위치와 기존 p2~p15가 바뀌지 않는지 확인 후 적용 |
+| 새로 생긴 큰 Unallocated 영역 → New | 남은 공간 최대 크기, Primary Partition, MiB 정렬 |
+| 새 파티션 이름 / 파일시스템 | `Partition name = JETSON_DATA`, `File system = unformatted`, Label 공란 |
+| 생성 후 Manage Flags | DATA에 **`msftdata`** 설정, 실제 GPT 유형도 별도 확인 |
+
+APP 시작 위치 약 1493MiB는 조회 화면의 반올림 표시다. 그 숫자를 직접 재입력하지 말고 기존 시작 위치를 보존한다. 작업 중 전원을 끄거나 카드를 분리하지 않는다. `Create Partition Table`, APP 포맷·삭제, 기존 시스템 파티션 이동은 하지 않는다.
+
+참고: [GParted 공식 매뉴얼](https://gparted.org/display-doc.php?name=help-manual), [GNU Parted의 msftdata 설명](https://www.gnu.org/software/parted/manual/html_node/set.html).
+
+### 14.4 NBPC에서 새 DATA만 exFAT으로 포맷
+
+**다음 `/dev/sdc16`은 이번 세션에서 사용자가 확인한 장치명이다. 다시 연결하거나 다른 PC에서 작업하면 바뀔 수 있다.** 매번 용량·파티션 이름·장치명을 확인하고, 아래 포맷 명령의 대상을 실제 DATA 파티션으로 바꾼다.
+
+```bash
+lsblk -o NAME,PATH,SIZE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINT /dev/sdc
+```
+
+이번에는 `/dev/sdc16`이 약 109GiB의 새 `JETSON_DATA`임을 확인했다. 마운트되어 있으면 해당 파티션만 해제한 뒤 포맷했다.
+
+```bash
+# 파괴적 명령: 확인한 새 DATA 파티션에만 실행한다.
+sudo mkfs.exfat -n JETSON_DATA /dev/sdc16
+sudo blkid /dev/sdc16
+lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTLABEL,PARTTYPE /dev/sdc
+sync
+```
+
+Ubuntu 20.04 `exfat-utils`의 레이블 옵션은 **`-n`**, Jetson의 `exfatprogs`에서는 **`-L`**이다. 서로 바꿔 쓰지 않는다. `TYPE="exfat"`와 `LABEL="JETSON_DATA"`를 확인한다. **포맷과 GPT 유형 지정은 별개이므로 PARTTYPE도 확인해야 한다.** 기존 `/dev/sdc1` 또는 전체 디스크 `/dev/sdc`를 포맷 대상으로 지정하지 않는다. 카드의 모든 마운트를 해제하고 안전하게 분리한다.
+
+옵션 근거: [Ubuntu 20.04 mkexfatfs 매뉴얼](https://manpages.ubuntu.com/manpages/focal/man8/mkexfatfs.8.html).
+
+### 14.5 Jetson 수동 마운트와 `/data` 충돌 해결
+
+Jetson의 파일 관리자에서는 네이티브 exFAT 미지원 오류가 발생했다. 재포맷하지 않고 이미 검증한 FUSE 구현을 명시했다.
+
+처음 시도한 `/data`는 비어 있지 않아 `fuse: mountpoint is not empty`로 실패했다. 확인 결과 기존 **`/data/tee`**가 있었다. 이 경로를 삭제·이동하거나 `nonempty`로 가리지 않고, 별도 마운트 지점을 선택했다.
+
+```bash
+lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINT
+sudo mkdir -p /mnt/jetson_data
+sudo mount.exfat-fuse \
+  -o uid=$(id -u),gid=$(id -g),umask=022 \
+  /dev/disk/by-label/JETSON_DATA /mnt/jetson_data
+findmnt --mountpoint /mnt/jetson_data
+```
+
+마운트 성공을 확인한 뒤에만 저장 테스트를 실행한다.
+
+```bash
+if mountpoint -q /mnt/jetson_data; then
+    printf 'Jetson exFAT OK\n' > /mnt/jetson_data/test.txt
+    sync
+    cat /mnt/jetson_data/test.txt
+else
+    echo 'ERROR: DATA is not mounted; do not write here.' >&2
+fi
+```
+
+실제 SD 파티션에서 `Jetson exFAT OK` 읽기·쓰기에 성공했다. `fuseblk` 표시는 정상이며 네이티브 커널 exFAT이 활성화됐다는 의미는 아니다.
+
+### 14.6 UUID 기반 자동 마운트
+
+```bash
+sudo blkid /dev/disk/by-label/JETSON_DATA
+id -u
+id -g
+sudo cp -a /etc/fstab "/etc/fstab.bak.$(date +%Y%m%d-%H%M%S)"
+# nano가 없으면 sudo apt install nano
+sudo nano /etc/fstab
+```
+
+다음은 **예제**다. `ACTUAL-UUID`와 `1000` 두 값을 실제 UUID·UID·GID로 치환한다. 기존 동일 마운트 지점 행이 있으면 수정하고 중복 추가하지 않는다.
+
+```fstab
+UUID=ACTUAL-UUID /mnt/jetson_data exfat-fuse rw,nofail,uid=1000,gid=1000,umask=022,x-systemd.device-timeout=10s 0 0
+```
+
+네이티브 지원이 없는 이 장비에서는 `exfat` 대신 **`exfat-fuse`**를 사용한다. `nofail`은 DATA 마운트 실패가 OS 부팅을 막지 않게 하기 위한 옵션이지, 데이터 저장이 가능하다는 보장이 아니다.
+
+MOSA와 해당 경로를 사용하는 파일 관리자·터미널을 닫고 검증한다.
+
+```bash
+cd "$HOME"
+sync
+sudo umount /mnt/jetson_data
+sudo systemctl daemon-reload
+sudo mount /mnt/jetson_data
+findmnt --mountpoint /mnt/jetson_data
+cat /mnt/jetson_data/test.txt
+```
+
+오류가 있으면 재부팅 전에 fstab을 수정한다. 성공 후 `sudo reboot`하고 `findmnt --mountpoint /mnt/jetson_data`로 재확인했다. **사용자가 재부팅 후 자동 마운트 성공까지 확인했다.**
+
+### 14.7 Windows에서 안 보였던 원인과 실제 해결
+
+Windows 디스크 관리에는 약 109GB 파티션이 보였지만 파일시스템이 공란이었고 탐색기에 나타나지 않았다. PowerShell 조회에서 DATA의 GPT 유형이 아래 Linux Filesystem GUID로 남아 있는 것을 확인했다.
+
+```text
+변경 전: 0FC63DAF-8483-4772-8E79-3D69D8477DE4  (Linux Filesystem)
+변경 후: EBD0A0A2-B9E5-4433-87C0-68B6B72699C7  (Microsoft Basic Data)
+```
+
+관리자 PowerShell에서 조회한다. `N`은 확인한 SD카드 디스크 번호다.
+
+```powershell
+Get-Disk | Format-Table Number,FriendlyName,Size,PartitionStyle
+Get-Partition -DiskNumber N |
+  Format-Table PartitionNumber,Size,GptType,DriveLetter,IsHidden,NoDefaultDriveLetter
+```
+
+DiskPart에서 **SD카드 번호 N과 DATA 번호 P를 매번 확인**한다. 이번 DATA는 16번이었지만 번호를 무조건 가정하지 않는다.
+
+```text
+diskpart
+list disk
+select disk N
+list partition
+select partition P
+detail partition
+```
+
+약 109GB DATA이고 현재 유형이 위 Linux GUID임을 확인한 경우에만 실행한다.
+
+```text
+set id=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7
+detail partition
+exit
+```
+
+이번에는 `override` 없이 변경에 성공했고, **Windows 탐색기에 DATA와 내부 파일이 정상 표시됨을 사용자가 확인했다.** 포맷·파티션 재생성 없이 GPT 유형만 수정했다. 드라이브 문자가 자동 할당되지 않으면 디스크 관리에서 해당 DATA에만 빈 문자를 할당한다.
+
+`clean`, 디스크 초기화, Linux/부팅 파티션 포맷·삭제는 금지한다. Windows가 다른 파티션의 포맷을 제안하면 취소한다. 이 수정은 DATA의 유형을 바꾸는 것이며 APP나 EFI 유형을 바꾸는 절차가 아니다. [Microsoft DiskPart set id 문서](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/set-id)의 대상 선택 경고도 참고한다.
+
+### 14.8 MOSA 저장 경로와 미마운트 방어
+
+마운트 확인 후에만 폴더를 만든다. 사용자 UID/GID로 마운트했으므로 일반 사용자로 생성한다.
+
+```bash
+if mountpoint -q /mnt/jetson_data; then
+    mkdir -p /mnt/jetson_data/inference_results /mnt/jetson_data/logs
+else
+    echo 'ERROR: DATA is not mounted; no directories were created.' >&2
+fi
+```
+
+MOSA GUI의 **저장 폴더**에서 `/mnt/jetson_data/inference_results`를 선택한다. 기존 `data.json`에서는 다음 항목만 실제 운용에 맞게 수정하고 나머지 설정을 유지한다.
+
+```json
+{
+  "CSV_path": "/mnt/jetson_data/logs",
+  "Data_log_flag": 1
+}
+```
+
+위 JSON은 기존 파일에 병합할 두 필드의 예시이며 전체 data.json 대체 파일이 아니다. 이미지 폴더는 GUI 선택값, CSV 폴더는 별도 설정이다. 코드·모델·venv는 기존 ext4에 유지한다.
+
+`MOSA_visualAD_comb_jetson.py`의 `_require_data_mount()`는 **`/mnt/jetson_data` 자체와 하위 경로**를 대상으로 `os.path.ismount()`를 확인한다. 단순히 폴더가 존재하는지 확인하는 것으로 대체하지 않는다. 다음 시점에서 검사한다.
+
+- GUI 폴더 선택, CSV 로깅이 활성화된 설정 로드(시작·측정 시).
+- 측정 시작 전과 비동기 카메라 준비 완료 후, 원본 이미지 쓰기 전.
+- 추론 후 결과 JPG 쓰기 직전과 CSV append 직전.
+
+미마운트이면 명확한 오류를 내고 해당 측정·저장을 중단한다. 자동 마운트·sudo·디렉터리 생성·OS 파티션으로의 대체 저장은 수행하지 않는다. DATA를 가리키는 심볼릭 링크도 검사하며, DATA 아래 경로가 링크를 통해 밖으로 빠져나가면 거부한다. 심볼릭 링크 뒤의 `..`를 먼저 제거하면 실제 경로와 달라질 수 있으므로 실제 경로 해석을 먼저 수행한다. 결과 JPG의 `cv2.imwrite()` 실패도 오류 처리한다.
+
+**기존 로컬 테스트 호환성을 위해 명시적으로 선택한 DATA 밖 경로는 계속 허용한다.** 이 검사는 저장 위치를 자동 변경하거나 모든 OS 저장을 금지하는 정책이 아니다. Windows 공유가 목적이면 GUI 폴더와 CSV_path를 모두 위 경로로 지정해야 한다. `run_mosa_logged.py`의 별도 터미널 로그 등 다른 스크립트까지 이번 보호 범위를 확장한 것은 아니다.
+
+이는 마운트 누락·측정 사이 언마운트를 탐지하는 방어다. 검사와 쓰기 사이의 강제 언마운트 경쟁, 잘못된 장치의 동일 위치 마운트, 매체 불량·공간 부족까지 보장하지 않는다. 앱 실행 중 언마운트하지 않고, 오류 발생 시 이미 일부 저장된 파일이 있을 수 있음을 확인한다. [Python ismount 문서](https://docs.python.org/3/library/os.path.html#os.path.ismount) 참고.
+
+검증 명령(모델·카메라·디스플레이 없이 실행):
+
+```bash
+python3 -m unittest discover -s tests -p test_mosa_storage.py -v
+python3 -m py_compile MOSA_visualAD_comb_jetson.py tests/test_mosa_storage.py
+```
+
+### 14.9 확인 상태와 운용 수칙
+
+| 항목 | 확인 상태 |
+| --- | --- |
+| 128MiB loop 이미지 포맷·재마운트·파일 유지 | 사용자 Jetson 확인 |
+| APP 축소 및 실제 DATA exFAT 생성 | 사용자 확인 |
+| 실제 DATA FUSE 읽기·쓰기 | 사용자 확인 |
+| fstab 설정·재부팅 후 자동 마운트 | 사용자 확인 |
+| GPT 유형 수정 후 Windows에서 DATA·내부 파일 보기 | 사용자 확인 |
+| Windows에서 새 파일 작성 후 Jetson 재읽기 | 아직 확인 보고 없음 |
+| 추가한 MOSA 마운트 방어 | 로컬 단위 테스트 20개 통과, 수정 코드의 Jetson GUI 실물 검증은 별도 |
+| 장시간 연속 추론 저장 성능·매체 수명 | 별도 검증 필요 |
+
+Jetson에서 MOSA를 종료하여 CSV 등 열린 파일을 닫고 `sync` 후 `sudo poweroff`한다. 전원이 완전히 꺼진 다음 SD카드를 옮긴다. OS 카드이므로 실행 중 빼지 않는다. Windows에서도 안전하게 제거한다. exFAT 공유 볼륨은 결과 교환용이며 유일한 백업으로 사용하지 않는다.
